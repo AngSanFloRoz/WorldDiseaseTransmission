@@ -1,0 +1,661 @@
+/* Variables y Reset */
+:root {
+    --color-libre: #4CAF50;
+    --color-expuesto: #FFC107;
+    --color-infectado: #F44336;
+    --color-recuperado: #2196F3;
+    --color-fondo: #f5f7fa;
+    --color-card: #ffffff;
+    --color-primary: #2c3e50;
+    --color-secondary: #3498db;
+    --color-success: #27ae60;
+    --color-danger: #e74c3c;
+    --color-warning: #f39c12;
+    --sombra: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --radio-borde: 10px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: var(--color-fondo);
+    color: #333;
+    line-height: 1.6;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+/* Header */
+header {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #1a252f 100%);
+    color: white;
+    padding: 1rem 2rem;
+    box-shadow: var(--sombra);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.btn-control {
+    background-color: var(--color-secondary);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s;
+    font-weight: 600;
+}
+
+.btn-control:hover {
+    background-color: #2980b9;
+    transform: translateY(-2px);
+}
+
+.fecha-display {
+    font-weight: bold;
+    font-size: 1.1rem;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 8px 12px;
+    border-radius: 6px;
+}
+
+/* Main Content */
+.main-content {
+    display: flex;
+    flex: 1;
+    padding: 20px;
+    gap: 20px;
+}
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.izquierda {
+    flex: 2;
+}
+
+.derecha {
+    flex: 1;
+    min-width: 350px;
+}
+
+/* Cards */
+.card {
+    background-color: var(--color-card);
+    border-radius: var(--radio-borde);
+    padding: 1.5rem;
+    box-shadow: var(--sombra);
+    transition: transform 0.3s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.card h2 {
+    color: var(--color-primary);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #eee;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Mapa */
+.mapa-container {
+    position: relative;
+    background: #f8f9fa;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #ddd;
+}
+
+#mapaCanvas {
+    display: block;
+    width: 100%;
+    background: #e8f4f8;
+}
+
+.leyenda {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 10px 15px;
+    border-radius: 6px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.leyenda-item {
+    display: flex;
+    align-items: center;
+    margin: 5px 0;
+}
+
+.color-muestra {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    margin-right: 10px;
+    border: 1px solid #ccc;
+}
+
+.libre { background-color: var(--color-libre); }
+.expuesto { background-color: var(--color-expuesto); }
+.infectado { background-color: var(--color-infectado); }
+.recuperado { background-color: var(--color-recuperado); }
+
+/* Matriz */
+.matriz-tabla {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.8rem;
+}
+
+.matriz-tabla th, .matriz-tabla td {
+    border: 1px solid #ddd;
+    padding: 4px;
+    text-align: center;
+    min-width: 30px;
+    height: 30px;
+}
+
+.matriz-corner {
+    background-color: #2c3e50;
+    color: white;
+    font-weight: bold;
+}
+
+.matriz-encabezado {
+    background-color: #34495e;
+    color: white;
+    font-weight: bold;
+    cursor: help;
+}
+
+/* CELDAS BASE */
+.matriz-celda {
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: bold;
+}
+
+/* CELDAS INACTIVAS (sin ruta) */
+.matriz-celda-inactiva {
+    background-color: rgba(240, 240, 240, 0.5) !important;
+    color: #888888 !important;
+}
+
+/* CELDAS ACTIVAS - COLORES SEGÚN TIPO DE RUTA */
+.celda-aerea {
+    background-color: rgba(255, 100, 100, 0.7) !important;
+    color: #000000 !important;
+}
+
+.celda-terrestre {
+    background-color: rgba(100, 255, 100, 0.7) !important;
+    color: #000000 !important;
+}
+
+.celda-maritima {
+    background-color: rgba(100, 100, 255, 0.7) !important;
+    color: #000000 !important;
+}
+
+/* Clase general para celdas activas (sin color específico aún) */
+.matriz-celda-activa {
+    /* El color se define por las clases específicas arriba */
+    color: #000000 !important;
+    font-weight: bold;
+}
+
+/* Hover effects */
+.matriz-celda:hover {
+    transform: scale(1.05);
+    z-index: 10;
+    position: relative;
+    box-shadow: 0 0 5px rgba(0,0,0,0.3);
+}
+
+/* Asegurar que las celdas de la diagonal (i=j) no sean clickeables */
+.matriz-celda[data-fila][data-columna]:not([data-columna]):not([data-fila]) {
+    cursor: default;
+    background-color: #f0f0f0;
+}
+
+/* Formularios */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.input-text, .input-number, .input-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+
+.input-number {
+    max-width: 120px;
+}
+
+.slider {
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: #ddd;
+    outline: none;
+    margin: 10px 0;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.checkbox-group {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-top: 5px;
+}
+
+.checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: normal;
+    cursor: pointer;
+}
+
+/* Botones */
+.btn-primary {
+    width: 100%;
+    padding: 12px;
+    background-color: var(--color-secondary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 10px;
+}
+
+.btn-primary:hover {
+    background-color: #2980b9;
+    transform: translateY(-2px);
+}
+
+.btn-success {
+    background-color: var(--color-success);
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn-danger {
+    background-color: var(--color-danger);
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+/* Lista de países */
+.lista-paises {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 15px;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.pais-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.pais-item:hover {
+    background-color: #f5f9ff;
+}
+
+.pais-item.seleccionado {
+    background-color: #e3f2fd;
+    border-left: 4px solid var(--color-secondary);
+}
+
+.pais-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.estado-pais {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+/* Análisis */
+.analisis-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.btn-analisis {
+    padding: 10px;
+    background-color: #34495e;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.3s;
+}
+
+.btn-analisis:hover {
+    background-color: #2c3e50;
+    transform: translateY(-2px);
+}
+
+.resultados-container {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 15px;
+    min-height: 100px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+}
+
+/* Estadísticas */
+.stats-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.stat-item {
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.9rem;
+    color: #6c757d;
+    margin-bottom: 5px;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: var(--color-primary);
+}
+
+/* Footer */
+footer {
+    background-color: var(--color-primary);
+    color: white;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: auto;
+}
+
+.footer-info {
+    display: flex;
+    gap: 20px;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background-color: white;
+    padding: 2rem;
+    border-radius: var(--radio-borde);
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.close-modal {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #7f8c8d;
+}
+
+.close-modal:hover {
+    color: #e74c3c;
+}
+
+.tipo-ruta-opciones {
+    margin: 20px 0;
+}
+
+.tipo-ruta-opcion {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    margin: 10px 0;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.tipo-ruta-opcion:hover {
+    border-color: #3498db;
+    background-color: #f8f9fa;
+    transform: translateY(-2px);
+}
+
+.tipo-ruta-opcion.seleccionada {
+    border-color: #2ecc71;
+    background-color: rgba(46, 204, 113, 0.1);
+}
+
+.tipo-ruta-icono {
+    width: 50px;
+    height: 50px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 15px;
+    font-size: 1.5rem;
+    color: #2c3e50;
+}
+
+.tipo-ruta-info {
+    flex: 1;
+}
+
+.tipo-ruta-info h4 {
+    margin: 0 0 5px 0;
+    color: #2c3e50;
+}
+
+.tipo-ruta-info p {
+    margin: 0 0 5px 0;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.tipo-ruta-info small {
+    color: #7f8c8d;
+    font-size: 0.8rem;
+}
+
+#modalRutaInfo {
+    font-weight: bold;
+    font-size: 1.1rem;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    text-align: center;
+}
+
+.modal-acciones {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .main-content {
+        flex-direction: column;
+    }
+    
+    .panel {
+        width: 100%;
+    }
+    
+    .derecha {
+        min-width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .header-controls {
+        justify-content: center;
+    }
+    
+    .form-row {
+        flex-direction: column;
+    }
+    
+    .analisis-buttons {
+        grid-template-columns: 1fr;
+    }
+    
+    .stats-container {
+        grid-template-columns: 1fr;
+    }
+    
+    footer {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+
+    .info-analisis {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        color: #666;
+    }
+
+    .leyenda .prediccion {
+        background-color: #9C27B0;
+    }
+
+    .leyenda .riesgo {
+        background-color: #FF9800;
+    }
+
+    .leyenda .ruta-critica {
+        background-color: #F44336;
+    }
+
+    /* Estilos para el canvas de análisis */
+    #mapaAnalisisCanvas {
+        background: #e8f4f8;
+    }
+}

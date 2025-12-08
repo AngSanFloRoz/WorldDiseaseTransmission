@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Propagación de Enfermedades</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1><i class="fas fa-virus"></i> Simulador Epidemiológico Global</h1>
+            <div class="header-controls">
+                <button id="btnPlayPause" class="btn-control"><i class="fas fa-play"></i> Iniciar</button>
+                <button id="btnStep" class="btn-control"><i class="fas fa-forward"></i> Paso</button>
+                <button id="btnReset" class="btn-control"><i class="fas fa-redo"></i> Reiniciar</button>
+                <span id="fechaActual" class="fecha-display">Día: 0</span>
+                <input type="range" id="velocidadSlider" min="1" max="10" value="5">
+                <span>Velocidad</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Panel izquierdo: Mapa y matriz -->
+            <section class="panel izquierda">
+                <div class="card">
+                    <h2><i class="fas fa-globe-americas"></i> Mapa Mundial</h2>
+                    <div id="mapaContainer" class="mapa-container">
+                        <!-- Los países se dibujarán aquí con SVG/Canvas -->
+                        <canvas id="mapaCanvas" width="800" height="500"></canvas>
+                        <div id="leyendaMapa" class="leyenda">
+                            <div class="leyenda-item"><span class="color-muestra libre"></span> Libre</div>
+                            <div class="leyenda-item"><span class="color-muestra expuesto"></span> Expuesto</div>
+                            <div class="leyenda-item"><span class="color-muestra infectado"></span> Infectado</div>
+                            <div class="leyenda-item"><span class="color-muestra recuperado"></span> Recuperado</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2><i class="fas fa-th"></i> Matriz de Conexiones</h2>
+                    <div class="matriz-controls">
+                        <button id="btnToggleMatriz" class="btn-small">Mostrar/Ocultar Matriz</button>
+                        <button id="btnEditarMatriz" class="btn-small"><i class="fas fa-edit"></i> Modo Edición</button>
+                    </div>
+                    <div id="matrizContainer" class="matriz-container">
+                        <!-- La matriz se generará dinámicamente -->
+                        <div class="matriz-overlay" id="matrizOverlay">
+                            <p>Matriz se generará después de crear países...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2><i class="fas fa-map-marked-alt"></i> Mapa de Análisis</h2>
+                    <div id="mapaAnalisisContainer" class="mapa-container">
+                        <canvas id="mapaAnalisisCanvas" width="800" height="300"></canvas>
+                        <div id="leyendaAnalisis" class="leyenda">
+                            <div class="leyenda-item">
+                                <span class="color-muestra prediccion"></span> Predicción 30 días
+                            </div>
+                            <div class="leyenda-item">
+                                <span class="color-muestra riesgo"></span> Países en riesgo
+                            </div>
+                            <div class="leyenda-item">
+                                <span class="color-muestra ruta-critica"></span> Rutas críticas
+                            </div>
+                        </div>
+                    </div>
+                    <div id="infoAnalisis" class="info-analisis">
+                        <p>Este mapa muestra resultados de análisis y predicciones</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Panel derecho: Controles y estadísticas -->
+            <section class="panel derecha">
+                <!-- Configuración de Enfermedad -->
+                <div class="card">
+                    <h2><i class="fas fa-biohazard"></i> Configuración de Enfermedad</h2>
+                    <div class="form-group">
+                        <label>Nombre:</label>
+                        <input type="text" id="nombreEnfermedad" value="COVID-19" class="input-text">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Tasa Contagio (%):</label>
+                            <input type="range" id="tasaContagio" min="1" max="100" value="30" class="slider">
+                            <span id="valorContagio">30%</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Tasa Mortalidad (%):</label>
+                            <input type="range" id="tasaMortalidad" min="0" max="50" value="2" class="slider">
+                            <span id="valorMortalidad">2%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tiempo Recuperación (días):</label>
+                        <input type="number" id="tiempoRecuperacion" min="1" max="60" value="14" class="input-number">
+                    </div>
+                    <div class="form-group">
+                        <label>País Origen:</label>
+                        <select id="paisOrigen" class="input-select">
+                            <option value="0">Seleccionar...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Vías Prevalecientes:</label>
+                        <div class="checkbox-group">
+                            <label><input type="checkbox" name="via" value="AEREO" checked> Aéreo</label>
+                            <label><input type="checkbox" name="via" value="TERRESTRE" checked> Terrestre</label>
+                            <label><input type="checkbox" name="via" value="MARITIMO"> Marítimo</label>
+                        </div>
+                    </div>
+                    <button id="btnAplicarEnfermedad" class="btn-primary">Aplicar Configuración</button>
+                </div>
+
+                <!-- Gestión de Países -->
+                <div class="card">
+                    <h2><i class="fas fa-flag"></i> Gestión de Países</h2>
+                    <div class="form-group">
+                        <label>Nombre País:</label>
+                        <input type="text" id="nombrePais" placeholder="Ej: Colombia" class="input-text">
+                    </div>
+                    <div class="form-group">
+                        <label>Población (millones):</label>
+                        <input type="number" id="poblacionPais" min="0.1" max="1500" value="50" step="0.1" class="input-number">
+                    </div>
+                    <div class="form-row">
+                        <button id="btnAgregarPais" class="btn-success"><i class="fas fa-plus"></i> Agregar País</button>
+                        <button id="btnEliminarPais" class="btn-danger"><i class="fas fa-trash"></i> Eliminar Seleccionado</button>
+                    </div>
+                    <div class="lista-paises" id="listaPaises">
+                        <!-- Lista dinámica de países -->
+                    </div>
+                </div>
+
+                <!-- Análisis y Predicciones -->
+                <div class="card">
+                    <h2><i class="fas fa-chart-line"></i> Análisis y Predicciones</h2>
+                    <div class="analisis-buttons">
+                        <button id="btnPredecir30" class="btn-analisis">Predecir 30 días</button>
+                        <button id="btnPaisesRiesgo" class="btn-analisis">Países en Riesgo</button>
+                        <button id="btnRutasCriticas" class="btn-analisis">Rutas Críticas</button>
+                        <button id="btnFiltrarAereo" class="btn-analisis">Solo Rutas Aéreas</button>
+                    </div>
+                    <div id="resultadosAnalisis" class="resultados-container">
+                        <p>Los resultados aparecerán aquí...</p>
+                    </div>
+                </div>
+
+                <!-- Estadísticas Globales -->
+                <div class="card">
+                    <h2><i class="fas fa-chart-bar"></i> Estadísticas Globales</h2>
+                    <div class="stats-container" id="estadisticasGlobales">
+                        <div class="stat-item">
+                            <span class="stat-label">Total Infectados:</span>
+                            <span class="stat-value" id="totalInfectados">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Total Fallecidos:</span>
+                            <span class="stat-value" id="totalFallecidos">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Países Afectados:</span>
+                            <span class="stat-value" id="paisesAfectados">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Tasa Propagación:</span>
+                            <span class="stat-value" id="tasaPropagacion">0.00</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Simulador Epidemiológico v1.0 - Implementación con Grafos y Matrices Dispersas</p>
+            <div class="footer-info">
+                <span id="estadoSimulacion">Estado: Configurando</span>
+                <span id="contadorPaises">Países: 0</span>
+                <span id="contadorRutas">Rutas: 0</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Modal para información de país -->
+    <div id="modalPais" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h3 id="modalPaisTitulo">Información del País</h3>
+            <div id="modalPaisContenido">
+                <!-- Contenido dinámico -->
+            </div>
+        </div>
+    </div>
+
+    <div id="modalTipoRuta" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <span class="close-modal" onclick="controlador.cerrarModalTipoRuta()">&times;</span>
+            <h3>Seleccionar Tipo de Ruta</h3>
+            <div id="modalTipoRutaContenido">
+                <p id="modalRutaInfo">Conectando: <span id="rutaPaises"></span></p>
+                
+                <div class="tipo-ruta-opciones">
+                    <div class="tipo-ruta-opcion" data-tipo="AEREO">
+                        <div class="tipo-ruta-icono" style="background-color: rgba(255, 0, 0, 0.3);">
+                            <i class="fas fa-plane"></i>
+                        </div>
+                        <div class="tipo-ruta-info">
+                            <h4>Aéreo</h4>
+                            <p>Alta velocidad, alto tráfico</p>
+                            <small>Probabilidad de contagio: Alta</small>
+                        </div>
+                    </div>
+                    
+                    <div class="tipo-ruta-opcion" data-tipo="TERRESTRE">
+                        <div class="tipo-ruta-icono" style="background-color: rgba(0, 128, 0, 0.3);">
+                            <i class="fas fa-car"></i>
+                        </div>
+                        <div class="tipo-ruta-info">
+                            <h4>Terrestre</h4>
+                            <p>Velocidad media, tráfico variable</p>
+                            <small>Probabilidad de contagio: Media</small>
+                        </div>
+                    </div>
+                    
+                    <div class="tipo-ruta-opcion" data-tipo="MARITIMO">
+                        <div class="tipo-ruta-icono" style="background-color: rgba(0, 0, 255, 0.3);">
+                            <i class="fas fa-ship"></i>
+                        </div>
+                        <div class="tipo-ruta-info">
+                            <h4>Marítimo</h4>
+                            <p>Baja velocidad, bajo tráfico</p>
+                            <small>Probabilidad de contagio: Baja</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-acciones">
+                    <button id="btnCancelarRuta" class="btn-small" onclick="controlador.cerrarModalTipoRuta()">Cancelar</button>
+                    <button id="btnConfirmarRuta" class="btn-primary" onclick="controlador.confirmarTipoRuta()">
+                        <i class="fas fa-check"></i> Confirmar Tipo de Ruta
+                    </button>
+                    <button id="btnEliminarRuta" class="btn-danger" style="display: none;">Eliminar Ruta</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
