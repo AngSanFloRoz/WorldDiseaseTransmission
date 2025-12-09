@@ -1,2 +1,2 @@
 # WorldDiseaseTransmission
-Programa de simulación de propagación de enfermedades
+Este proyecto es un programa que busca 
