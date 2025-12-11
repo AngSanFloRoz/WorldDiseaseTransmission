@@ -6,6 +6,8 @@
     <title>Simulador de Propagación de Enfermedades</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -16,8 +18,10 @@
                 <button id="btnStep" class="btn-control"><i class="fas fa-forward"></i> Paso</button>
                 <button id="btnReset" class="btn-control"><i class="fas fa-redo"></i> Reiniciar</button>
                 <span id="fechaActual" class="fecha-display">Día: 0</span>
-                <input type="range" id="velocidadSlider" min="1" max="10" value="5">
-                <span>Velocidad</span>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="velocidadSlider" min="1" max="10" value="5">
+                    <span>Velocidad</span>
+                </div>
             </div>
         </header>
 
@@ -25,15 +29,17 @@
             <!-- Panel izquierdo: Mapa y matriz -->
             <section class="panel izquierda">
                 <div class="card">
-                    <h2><i class="fas fa-globe-americas"></i> Mapa Mundial</h2>
+                    <h2><i class="fas fa-globe-americas"></i> Mapa Principal</h2>
                     <div id="mapaContainer" class="mapa-container">
-                        <!-- Los países se dibujarán aquí con SVG/Canvas -->
-                        <canvas id="mapaCanvas" width="800" height="500"></canvas>
+                        <div id="mapaCanvas"></div>
                         <div id="leyendaMapa" class="leyenda">
                             <div class="leyenda-item"><span class="color-muestra libre"></span> Libre</div>
                             <div class="leyenda-item"><span class="color-muestra expuesto"></span> Expuesto</div>
                             <div class="leyenda-item"><span class="color-muestra infectado"></span> Infectado</div>
                             <div class="leyenda-item"><span class="color-muestra recuperado"></span> Recuperado</div>
+                            <div class="leyenda-item"><span class="color-muestra epidemia"></span> Epidemia</div>
+                            <div class="leyenda-item"><span class="color-muestra cuarentena"></span> En Cuarentena</div>
+                            <div class="leyenda-item"><span class="color-muestra reinfeccion"></span> Reinfección</div>
                         </div>
                     </div>
                 </div>
@@ -41,13 +47,12 @@
                 <div class="card">
                     <h2><i class="fas fa-th"></i> Matriz de Conexiones</h2>
                     <div class="matriz-controls">
-                        <button id="btnToggleMatriz" class="btn-small">Mostrar/Ocultar Matriz</button>
+                        <button id="btnToggleMatriz" class="btn-small"><i class="fas fa-eye"></i> Mostrar/Ocultar</button>
                         <button id="btnEditarMatriz" class="btn-small"><i class="fas fa-edit"></i> Modo Edición</button>
                     </div>
                     <div id="matrizContainer" class="matriz-container">
-                        <!-- La matriz se generará dinámicamente -->
                         <div class="matriz-overlay" id="matrizOverlay">
-                            <p>Matriz se generará después de crear países...</p>
+                            <p>Selecciona un mapa para ver la matriz...</p>
                         </div>
                     </div>
                 </div>
@@ -55,13 +60,13 @@
                 <div class="card">
                     <h2><i class="fas fa-map-marked-alt"></i> Mapa de Análisis</h2>
                     <div id="mapaAnalisisContainer" class="mapa-container">
-                        <canvas id="mapaAnalisisCanvas" width="800" height="300"></canvas>
+                        <div id="mapaAnalisisCanvas"></div>
                         <div id="leyendaAnalisis" class="leyenda">
                             <div class="leyenda-item">
                                 <span class="color-muestra prediccion"></span> Predicción 30 días
                             </div>
                             <div class="leyenda-item">
-                                <span class="color-muestra riesgo"></span> Países en riesgo
+                                <span class="color-muestra riesgo"></span> Regiones en riesgo
                             </div>
                             <div class="leyenda-item">
                                 <span class="color-muestra ruta-critica"></span> Rutas críticas
@@ -69,7 +74,7 @@
                         </div>
                     </div>
                     <div id="infoAnalisis" class="info-analisis">
-                        <p>Este mapa muestra resultados de análisis y predicciones</p>
+                        <p>Este mapa muestra resultados de análisis y predicciones. Selecciona un análisis en el panel derecho.</p>
                     </div>
                 </div>
             </section>
@@ -77,62 +82,74 @@
             <!-- Panel derecho: Controles y estadísticas -->
             <section class="panel derecha">
                 <!-- Configuración de Enfermedad -->
-                <div class="card">
+                <div class="card panel-configuracion">
                     <h2><i class="fas fa-biohazard"></i> Configuración de Enfermedad</h2>
                     <div class="form-group">
-                        <label>Nombre:</label>
+                        <label>Nombre de la Enfermedad:</label>
                         <input type="text" id="nombreEnfermedad" value="COVID-19" class="input-text">
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Tasa Contagio (%):</label>
+                            <label>Tasa de Contagio (%):</label>
                             <input type="range" id="tasaContagio" min="1" max="100" value="30" class="slider">
                             <span id="valorContagio">30%</span>
                         </div>
                         <div class="form-group">
-                            <label>Tasa Mortalidad (%):</label>
+                            <label>Tasa de Mortalidad (%):</label>
                             <input type="range" id="tasaMortalidad" min="0" max="50" value="2" class="slider">
                             <span id="valorMortalidad">2%</span>
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>Tiempo Recuperación (días):</label>
+                        <label>Tiempo de Recuperación (días):</label>
                         <input type="number" id="tiempoRecuperacion" min="1" max="60" value="14" class="input-number">
                     </div>
                     <div class="form-group">
-                        <label>País Origen:</label>
-                        <select id="paisOrigen" class="input-select">
-                            <option value="0">Seleccionar...</option>
+                        <label>Región Origen:</label>
+                        <select id="regionOrigen" class="input-select">
+                            <option value="null">Seleccionar...</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Vías Prevalecientes:</label>
+                        <label>Vías de Transmisión:</label>
                         <div class="checkbox-group">
-                            <label><input type="checkbox" name="via" value="AEREO" checked> Aéreo</label>
-                            <label><input type="checkbox" name="via" value="TERRESTRE" checked> Terrestre</label>
-                            <label><input type="checkbox" name="via" value="MARITIMO"> Marítimo</label>
+                            <label><input type="checkbox" name="via" value="AEREO" checked> <i class="fas fa-plane"></i> Aéreo</label>
+                            <label><input type="checkbox" name="via" value="TERRESTRE" checked> <i class="fas fa-car"></i> Terrestre</label>
+                            <label><input type="checkbox" name="via" value="MARITIMO"> <i class="fas fa-ship"></i> Marítimo</label>
                         </div>
                     </div>
-                    <button id="btnAplicarEnfermedad" class="btn-primary">Aplicar Configuración</button>
+                    
+                    <!-- Control de reinfecciones -->
+                    <div class="config-item" style="margin: 15px 0;">
+                        <label style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="toggleReinfecciones" checked style="width: auto;">
+                            <span>Permitir reinfecciones</span>
+                        </label>
+                        <small style="display: block; margin-top: 5px; color: #666;">
+                            Los recuperados pueden volver a infectarse con menor probabilidad
+                        </small>
+                    </div>
+                    
+                    <button id="btnAplicarEnfermedad" class="btn-primary"><i class="fas fa-check"></i> Aplicar Configuración</button>
                 </div>
 
-                <!-- Gestión de Países -->
+                <!-- Selección del Mapa -->
                 <div class="card">
-                    <h2><i class="fas fa-flag"></i> Gestión de Países</h2>
+                    <h2><i class="fas fa-map"></i> Selección del Mapa</h2>
                     <div class="form-group">
-                        <label>Nombre País:</label>
-                        <input type="text" id="nombrePais" placeholder="Ej: Colombia" class="input-text">
+                        <label>Selecciona el mapa a simular:</label>
+                        <select id="selectorMapa" class="input-select">
+                            <option value="mundo">🌍 Mapa Mundial</option>
+                            <option value="america_latina">🇱🇷 América Latina</option>
+                            <option value="colombia">🇨🇴 Colombia (Departamentos)</option>
+                        </select>
                     </div>
                     <div class="form-group">
-                        <label>Población (millones):</label>
-                        <input type="number" id="poblacionPais" min="0.1" max="1500" value="50" step="0.1" class="input-number">
-                    </div>
-                    <div class="form-row">
-                        <button id="btnAgregarPais" class="btn-success"><i class="fas fa-plus"></i> Agregar País</button>
-                        <button id="btnEliminarPais" class="btn-danger"><i class="fas fa-trash"></i> Eliminar Seleccionado</button>
-                    </div>
-                    <div class="lista-paises" id="listaPaises">
-                        <!-- Lista dinámica de países -->
+                        <label>Regiones en el mapa:</label>
+                        <div class="lista-regiones" id="listaRegiones">
+                            <!-- Lista dinámica de regiones -->
+                            <p style="text-align: center; color: #666; padding: 20px;">Selecciona un mapa...</p>
+                        </div>
                     </div>
                 </div>
 
@@ -140,13 +157,13 @@
                 <div class="card">
                     <h2><i class="fas fa-chart-line"></i> Análisis y Predicciones</h2>
                     <div class="analisis-buttons">
-                        <button id="btnPredecir30" class="btn-analisis">Predecir 30 días</button>
-                        <button id="btnPaisesRiesgo" class="btn-analisis">Países en Riesgo</button>
-                        <button id="btnRutasCriticas" class="btn-analisis">Rutas Críticas</button>
-                        <button id="btnFiltrarAereo" class="btn-analisis">Solo Rutas Aéreas</button>
+                        <button id="btnPredecir30" class="btn-analisis"><i class="fas fa-calendar-alt"></i> Predecir 30 días</button>
+                        <button id="btnRegionesRiesgo" class="btn-analisis"><i class="fas fa-exclamation-triangle"></i> Regiones en Riesgo</button>
+                        <button id="btnRutasCriticas" class="btn-analisis"><i class="fas fa-road"></i> Rutas Críticas</button>
+                        <button id="btnFiltrarAereo" class="btn-analisis"><i class="fas fa-plane"></i> Solo Rutas Aéreas</button>
                     </div>
                     <div id="resultadosAnalisis" class="resultados-container">
-                        <p>Los resultados aparecerán aquí...</p>
+                        <p>Ejecuta un análisis para ver los resultados aquí. Puedes predecir el comportamiento a 30 días, identificar regiones en riesgo o rutas críticas de contagio.</p>
                     </div>
                 </div>
 
@@ -163,45 +180,54 @@
                             <span class="stat-value" id="totalFallecidos">0</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Países Afectados:</span>
-                            <span class="stat-value" id="paisesAfectados">0</span>
+                            <span class="stat-label">Regiones Afectadas:</span>
+                            <span class="stat-value" id="regionesAfectadas">0</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Tasa Propagación:</span>
-                            <span class="stat-value" id="tasaPropagacion">0.00</span>
+                            <span class="stat-label">Reinfecciones:</span>
+                            <span class="stat-value" id="reinfecciones">0</span>
                         </div>
+                        <div class="stat-item">
+                            <span class="stat-label" id="tasaLabel">Tasa de Propagación:</span>
+                            <span class="stat-value" id="tasaPropagacion">0.00%</span>
+                        </div>
+                    </div>
+                    <div class="stats-info">
+                        <p>*Cuando la tasa es negativa, se muestra como <strong>Tasa de Curación</strong>.</p>
                     </div>
                 </div>
             </section>
         </main>
 
         <footer>
-            <p>Simulador Epidemiológico v1.0 - Implementación con Grafos y Matrices Dispersas</p>
+            <p><i class="fas fa-code"></i> Simulador Epidemiológico v3.0 - Implementación con Grafos y Matrices Dispersas</p>
             <div class="footer-info">
                 <span id="estadoSimulacion">Estado: Configurando</span>
-                <span id="contadorPaises">Países: 0</span>
+                <span id="contadorRegiones">Regiones: 0</span>
                 <span id="contadorRutas">Rutas: 0</span>
+                <span id="mapaActual">Mapa: Mundial</span>
             </div>
         </footer>
     </div>
 
-    <!-- Modal para información de país -->
-    <div id="modalPais" class="modal">
+    <!-- Modal para información de región -->
+    <div id="modalRegion" class="modal">
         <div class="modal-content">
             <span class="close-modal">&times;</span>
-            <h3 id="modalPaisTitulo">Información del País</h3>
-            <div id="modalPaisContenido">
+            <h3 id="modalRegionTitulo">Información de la Región</h3>
+            <div id="modalRegionContenido">
                 <!-- Contenido dinámico -->
             </div>
         </div>
     </div>
 
+    <!-- Modal para tipo de ruta -->
     <div id="modalTipoRuta" class="modal">
         <div class="modal-content" style="max-width: 400px;">
-            <span class="close-modal" onclick="controlador.cerrarModalTipoRuta()">&times;</span>
+            <span class="close-modal" onclick="cerrarModalTipoRuta()">&times;</span>
             <h3>Seleccionar Tipo de Ruta</h3>
             <div id="modalTipoRutaContenido">
-                <p id="modalRutaInfo">Conectando: <span id="rutaPaises"></span></p>
+                <p id="modalRutaInfo">Conectando: <span id="rutaRegiones"></span></p>
                 
                 <div class="tipo-ruta-opciones">
                     <div class="tipo-ruta-opcion" data-tipo="AEREO">
@@ -239,11 +265,11 @@
                 </div>
                 
                 <div class="modal-acciones">
-                    <button id="btnCancelarRuta" class="btn-small" onclick="controlador.cerrarModalTipoRuta()">Cancelar</button>
-                    <button id="btnConfirmarRuta" class="btn-primary" onclick="controlador.confirmarTipoRuta()">
-                        <i class="fas fa-check"></i> Confirmar Tipo de Ruta
+                    <button id="btnCancelarRuta" class="btn-small" onclick="cerrarModalTipoRuta()"><i class="fas fa-times"></i> Cancelar</button>
+                    <button id="btnConfirmarRuta" class="btn-primary" onclick="confirmarTipoRuta()">
+                        <i class="fas fa-check"></i> Confirmar
                     </button>
-                    <button id="btnEliminarRuta" class="btn-danger" style="display: none;">Eliminar Ruta</button>
+                    <button id="btnEliminarRuta" class="btn-danger" style="display: none;"><i class="fas fa-trash"></i> Eliminar Ruta</button>
                 </div>
             </div>
         </div>
