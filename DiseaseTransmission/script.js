@@ -1,57 +1,178 @@
 // ================================
-// CLASES DEL MODELO DE DATOS
+// CLASES DEL MODELO DE DATOS - VERSIÓN MEJORADA
 // ================================
 
-class Pais {
+class Region {
     constructor(id, nombre, poblacionTotal, latitud, longitud) {
         this.id = id;
         this.nombre = nombre;
         this.coordenadas = { latitud, longitud };
+        
+        // Sistema de cohortes para manejar reinfecciones
+        this.cohortesInfectados = [];
+        this.cohortesRecuperados = [];
+        
         this.estadoPoblacion = {
-            total: poblacionTotal * 1000000, // Convertir millones a unidades
+            total: poblacionTotal * 1000000,
             susceptible: poblacionTotal * 1000000,
             infectada: 0,
             recuperada: 0,
-            fallecida: 0
+            fallecida: 0,
+            reinfectados: 0
         };
+        
         this.medidasVigentes = [];
-        this.estadoInfeccioso = 'LIBRE'; // LIBRE, EXPUESTO, INFECTADO, RECUPERADO
+        this.estadoInfeccioso = 'LIBRE';
         this.factorTransmision = 1.0;
+        this.enCuarentena = false;
+        this.rutasCortadas = [];
+        this.historialEstados = [];
+    }
+
+    agregarInfeccion(cantidad, dia, esReinfeccion = false) {
+        if (cantidad <= 0 || this.enCuarentena) return;
+        
+        cantidad = Math.min(cantidad, this.estadoPoblacion.susceptible);
+        
+        if (cantidad > 0) {
+            this.estadoPoblacion.susceptible -= cantidad;
+            this.estadoPoblacion.infectada += cantidad;
+            
+            this.cohortesInfectados.push({
+                diaInicio: dia,
+                cantidad: cantidad,
+                esReinfeccion: esReinfeccion,
+                vecesInfectado: esReinfeccion ? 2 : 1
+            });
+            
+            if (esReinfeccion) {
+                this.estadoPoblacion.reinfectados += cantidad;
+            }
+            
+            this.actualizarEstadoInfeccioso();
+            this.registrarHistorial();
+        }
     }
 
     actualizarEstado(nuevosValores) {
-        // Asegurar que no haya valores negativos
         Object.keys(nuevosValores).forEach(key => {
-            if (nuevosValores[key] < 0) {
-                nuevosValores[key] = 0;
-            }
+            if (nuevosValores[key] < 0) nuevosValores[key] = 0;
+            this.estadoPoblacion[key] = nuevosValores[key];
         });
         
-        // Asegurar que la suma no exceda la población total
-        const suma = Object.values(nuevosValores).reduce((a, b) => a + b, 0);
+        const suma = this.estadoPoblacion.susceptible + 
+                    this.estadoPoblacion.infectada + 
+                    this.estadoPoblacion.recuperada + 
+                    this.estadoPoblacion.fallecida;
+        
         if (suma > this.estadoPoblacion.total) {
-            // Normalizar para mantener total
             const factor = this.estadoPoblacion.total / suma;
-            Object.keys(nuevosValores).forEach(key => {
-                nuevosValores[key] = Math.floor(nuevosValores[key] * factor);
-            });
+            this.estadoPoblacion.susceptible = Math.round(this.estadoPoblacion.susceptible * factor);
+            this.estadoPoblacion.infectada = Math.round(this.estadoPoblacion.infectada * factor);
+            this.estadoPoblacion.recuperada = Math.round(this.estadoPoblacion.recuperada * factor);
+            this.estadoPoblacion.fallecida = Math.round(this.estadoPoblacion.fallecida * factor);
+            
+            const ajuste = this.estadoPoblacion.total - 
+                         (this.estadoPoblacion.susceptible + 
+                          this.estadoPoblacion.infectada + 
+                          this.estadoPoblacion.recuperada + 
+                          this.estadoPoblacion.fallecida);
+            
+            if (ajuste !== 0) {
+                this.estadoPoblacion.susceptible += ajuste;
+            }
         }
         
-        Object.assign(this.estadoPoblacion, nuevosValores);
-        
-        // Actualizar estado infeccioso basado en porcentaje de infectados
+        this.actualizarEstadoInfeccioso();
+        this.registrarHistorial();
+    }
+
+    actualizarEstadoInfeccioso() {
         const porcentajeInfectado = (this.estadoPoblacion.infectada / this.estadoPoblacion.total) * 100;
         
         if (this.estadoPoblacion.infectada === 0) {
-            if (this.estadoPoblacion.recuperada > 0 || this.estadoPoblacion.fallecida > 0) {
+            if (this.estadoPoblacion.recuperada > 0) {
                 this.estadoInfeccioso = 'RECUPERADO';
             } else {
                 this.estadoInfeccioso = 'LIBRE';
             }
         } else if (porcentajeInfectado < 1) {
             this.estadoInfeccioso = 'EXPUESTO';
-        } else {
+        } else if (porcentajeInfectado < 10) {
             this.estadoInfeccioso = 'INFECTADO';
+        } else if (porcentajeInfectado < 30) {
+            this.estadoInfeccioso = 'BROTE';
+        } else {
+            this.estadoInfeccioso = 'EPIDEMIA';
+        }
+    }
+
+    registrarHistorial() {
+        this.historialEstados.push({
+            fecha: new Date().toISOString(),
+            estado: this.estadoInfeccioso,
+            datos: { ...this.estadoPoblacion },
+            enCuarentena: this.enCuarentena
+        });
+        
+        if (this.historialEstados.length > 100) {
+            this.historialEstados.shift();
+        }
+    }
+
+    procesarCohortes(diaActual, enfermedad) {
+        let totalFallecidos = 0;
+        let totalRecuperados = 0;
+        let cohortesProcesadas = [];
+        
+        for (let i = this.cohortesInfectados.length - 1; i >= 0; i--) {
+            const cohorte = this.cohortesInfectados[i];
+            const diasTranscurridos = diaActual - cohorte.diaInicio;
+            
+            if (diasTranscurridos >= enfermedad.tiempoRecuperacion) {
+                const fallecidos = Math.floor(cohorte.cantidad * enfermedad.tasaMortalidad);
+                const recuperados = cohorte.cantidad - fallecidos;
+                
+                totalFallecidos += fallecidos;
+                totalRecuperados += recuperados;
+                
+                this.cohortesRecuperados.push({
+                    diaRecuperacion: diaActual,
+                    cantidad: recuperados,
+                    vecesInfectado: cohorte.vecesInfectado
+                });
+                
+                cohortesProcesadas.push(i);
+            }
+        }
+        
+        cohortesProcesadas.forEach(index => {
+            this.cohortesInfectados.splice(index, 1);
+        });
+        
+        if (cohortesProcesadas.length > 0) {
+            this.estadoPoblacion.infectada -= (totalFallecidos + totalRecuperados);
+            this.estadoPoblacion.fallecida += totalFallecidos;
+            this.estadoPoblacion.recuperada += totalRecuperados;
+            
+            if (!this.enCuarentena) {
+                this.aplicarPerdidaInmunidad(enfermedad);
+            }
+            
+            this.actualizarEstadoInfeccioso();
+            this.registrarHistorial();
+        }
+    }
+
+    aplicarPerdidaInmunidad(enfermedad) {
+        if (this.estadoPoblacion.recuperada === 0 || this.enCuarentena) return;
+        
+        const tasaBasePerdida = 0.001;
+        const perdida = Math.max(1, Math.floor(this.estadoPoblacion.recuperada * tasaBasePerdida));
+        
+        if (perdida > 0) {
+            this.estadoPoblacion.recuperada -= perdida;
+            this.estadoPoblacion.susceptible += perdida;
         }
     }
 
@@ -70,79 +191,144 @@ class Pais {
         }
     }
 
+    toggleCuarentena(activo) {
+        const anterior = this.enCuarentena;
+        this.enCuarentena = activo;
+        
+        if (activo && !this.medidasVigentes.includes('cuarentena')) {
+            this.medidasVigentes.push('cuarentena');
+        } else if (!activo) {
+            const index = this.medidasVigentes.indexOf('cuarentena');
+            if (index > -1) {
+                this.medidasVigentes.splice(index, 1);
+            }
+        }
+        
+        this.calcularFactorTransmision();
+        
+        if (anterior !== activo) {
+            this.registrarHistorial();
+        }
+    }
+
     calcularFactorTransmision() {
         let factor = 1.0;
         
         this.medidasVigentes.forEach(medida => {
             switch(medida) {
-                case 'cuarentena':
-                    factor *= 0.3;
-                    break;
-                case 'cierre_fronteras':
-                    factor *= 0.1;
-                    break;
-                case 'distanciamiento':
-                    factor *= 0.6;
-                    break;
-                case 'mascarillas':
-                    factor *= 0.8;
-                    break;
+                case 'cuarentena': factor *= this.enCuarentena ? 0.0 : 0.3; break;
+                case 'cierre_fronteras': factor *= 0.1; break;
+                case 'distanciamiento': factor *= 0.6; break;
+                case 'mascarillas': factor *= 0.8; break;
+                case 'vacunacion': factor *= 0.7; break;
             }
         });
         
-        this.factorTransmision = Math.max(factor, 0.05);
+        this.factorTransmision = Math.max(factor, 0.0);
         return this.factorTransmision;
     }
 
     getColorEstado() {
+        if (this.enCuarentena) return '#673AB7';
+        
         const colores = {
             'LIBRE': '#4CAF50',
             'EXPUESTO': '#FFC107',
             'INFECTADO': '#F44336',
-            'RECUPERADO': '#2196F3'
+            'RECUPERADO': '#2196F3',
+            'BROTE': '#E91E63',
+            'EPIDEMIA': '#D32F2F'
         };
         return colores[this.estadoInfeccioso] || '#757575';
+    }
+
+    getIconoEstado() {
+        const iconos = {
+            'LIBRE': '🟢',
+            'EXPUESTO': '🟡',
+            'INFECTADO': '🔴',
+            'RECUPERADO': '🔵',
+            'BROTE': '🟣',
+            'EPIDEMIA': '⚫'
+        };
+        return iconos[this.estadoInfeccioso] || '⚪';
     }
 }
 
 class RutaTransmision {
     constructor(idOrigen, idDestino, tipo, trafico = 0.5, distancia = 1000) {
-        this.idOrigen = idOrigen;
-        this.idDestino = idDestino;
-        this.tipo = tipo; // AEREO, TERRESTRE, MARITIMO
-        this.trafico = Math.min(Math.max(trafico, 0), 1); // Normalizado 0-1
+        const [menorId, mayorId] = idOrigen < idDestino ? 
+            [idOrigen, idDestino] : [idDestino, idOrigen];
+        
+        this.idOrigen = menorId;
+        this.idDestino = mayorId;
+        this.tipo = tipo;
+        this.trafico = Math.min(Math.max(trafico, 0), 1);
         this.distancia = distancia;
         this.tiempoViajePromedio = this.calcularTiempoViaje();
         this.activa = true;
-        this.bidireccional = true; // Todas las rutas son bidireccionales ahora
+        this.cortada = false;
+        this.historialTrafico = [];
     }
 
     calcularTiempoViaje() {
-        // Tiempo basado en distancia y tipo de ruta
-        const velocidades = {
-            'AEREO': 800, // km/h
-            'TERRESTRE': 80,
-            'MARITIMO': 40
+        const velocidadesBase = {
+            'AEREO': 600,
+            'TERRESTRE': 60,
+            'MARITIMO': 30
         };
-        return this.distancia / (velocidades[this.tipo] || 50);
+        
+        const tiempoBase = this.distancia / (velocidadesBase[this.tipo] || 50);
+        
+        const tiemposProceso = {
+            'AEREO': 6,
+            'TERRESTRE': 2,
+            'MARITIMO': 12
+        };
+        
+        return tiempoBase + (tiemposProceso[this.tipo] || 0);
     }
 
-    calcularProbabilidadBase() {
-        // Probabilidad base combina tráfico y distancia
-        let probabilidad = this.trafico * 0.7 + (1 / (this.distancia / 1000 + 1)) * 0.3;
+    calcularProbabilidadBase(factorContagio = 1.0) {
+        if (this.cortada) return 0;
         
-        // Ajustar por tipo de ruta
+        let probabilidad = this.trafico * 0.4 + 
+                          (1 / (1 + this.distancia / 500)) * 0.3 +
+                          (1 / (1 + this.tiempoViajePromedio / 24)) * 0.3;
+        
         const factoresTipo = {
-            'AEREO': 0.9,
-            'TERRESTRE': 0.7,
-            'MARITIMO': 0.5
+            'AEREO': 0.8,
+            'TERRESTRE': 0.9,
+            'MARITIMO': 0.6
         };
         
         probabilidad *= factoresTipo[this.tipo] || 0.5;
-        return Math.min(probabilidad, 0.95);
+        probabilidad *= Math.exp(-this.tiempoViajePromedio / 48);
+        probabilidad *= factorContagio;
+        
+        return Math.min(Math.max(probabilidad, 0.01), 0.95);
+    }
+
+    cortar() {
+        this.cortada = true;
+        this.historialTrafico.push({
+            fecha: new Date().toISOString(),
+            accion: 'CORTADA',
+            traficoAnterior: this.trafico
+        });
+    }
+
+    restaurar() {
+        this.cortada = false;
+        this.historialTrafico.push({
+            fecha: new Date().toISOString(),
+            accion: 'RESTAURADA'
+        });
     }
 
     getColor() {
+        if (this.cortada) return 'rgba(128, 128, 128, 0.3)';
+        
         const colores = {
             'AEREO': 'rgba(255, 0, 0, 0.6)',
             'TERRESTRE': 'rgba(0, 128, 0, 0.6)',
@@ -150,83 +336,150 @@ class RutaTransmision {
         };
         return colores[this.tipo] || 'rgba(100, 100, 100, 0.6)';
     }
+
+    getIconoTipo() {
+        const iconos = {
+            'AEREO': '✈️',
+            'TERRESTRE': '🚗',
+            'MARITIMO': '🚢'
+        };
+        return iconos[this.tipo] || '🛤️';
+    }
 }
 
 class Enfermedad {
-    constructor(nombre, tasaContagio, tasaMortalidad, tiempoRecuperacion, paisOrigen) {
+    constructor(nombre, tasaContagio, tasaMortalidad, tiempoRecuperacion, regionOrigen) {
         this.nombre = nombre;
-        this.tasaContagio = tasaContagio / 100; // Convertir porcentaje a decimal
+        this.tasaContagio = tasaContagio / 100;
         this.tasaMortalidad = tasaMortalidad / 100;
         this.tiempoRecuperacion = tiempoRecuperacion;
-        this.paisOrigen = paisOrigen;
+        this.regionOrigen = regionOrigen;
         this.viaPrevaleciente = ['AEREO', 'TERRESTRE'];
-        this.evolucionVias = {
-            diasParaMaritimo: 30,
-            diasParaTodas: 60
-        };
         this.diasTranscurridos = 0;
+        this.factorReduccionReinfeccion = 0.3;
+        this.variantes = [];
+        this.registrarVariante('Original', this.tasaContagio, this.tasaMortalidad);
     }
 
     evolucionar(dias = 1) {
         this.diasTranscurridos += dias;
         
-        // Evolución de vías de transmisión
-        if (this.diasTranscurridos >= this.evolucionVias.diasParaMaritimo && 
-            !this.viaPrevaleciente.includes('MARITIMO')) {
+        if (this.diasTranscurridos >= 30 && !this.viaPrevaleciente.includes('MARITIMO')) {
             this.viaPrevaleciente.push('MARITIMO');
         }
         
-        // Posible mutación (aumento de contagio)
-        if (this.diasTranscurridos % 45 === 0) {
-            this.tasaContagio *= 1.1; // Aumenta 10% cada 45 días
+        if (this.diasTranscurridos >= 90) {
+            const nuevaVariante = this.generarVariante();
+            this.variantes.push(nuevaVariante);
+            this.aplicarVariante(nuevaVariante);
         }
     }
 
+    generarVariante() {
+        const nombres = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Omicron'];
+        const nombre = nombres[Math.floor(Math.random() * nombres.length)];
+        const incrementoContagio = 0.1 + Math.random() * 0.2;
+        const cambioMortalidad = -0.05 + Math.random() * 0.1;
+        
+        return {
+            nombre: nombre,
+            tasaContagio: this.tasaContagio * (1 + incrementoContagio),
+            tasaMortalidad: this.tasaMortalidad * (1 + cambioMortalidad),
+            diaAparicion: this.diasTranscurridos,
+            resistenciaInmunidad: 0.3 + Math.random() * 0.4
+        };
+    }
+
+    aplicarVariante(variante) {
+        this.tasaContagio = variante.tasaContagio;
+        this.tasaMortalidad = variante.tasaMortalidad;
+        this.factorReduccionReinfeccion = 1 - variante.resistenciaInmunidad;
+    }
+
+    registrarVariante(nombre, tasaContagio, tasaMortalidad) {
+        this.variantes.push({
+            nombre: nombre,
+            tasaContagio: tasaContagio,
+            tasaMortalidad: tasaMortalidad,
+            diaAparicion: 0
+        });
+    }
+
+    calcularProbabilidadInfeccion(vecesInfectado = 1, esReinfeccion = false) {
+        let probabilidadBase = this.tasaContagio;
+        
+        if (esReinfeccion) {
+            probabilidadBase *= this.factorReduccionReinfeccion * 
+                              Math.pow(0.5, vecesInfectado - 2);
+        }
+        
+        return Math.min(probabilidadBase, 0.99);
+    }
+
     generarGrafoProbabilistico(mundo) {
-        const grafo = {
-            nodos: [],
-            aristas: []
+        const grafo = { 
+            nodos: [], 
+            aristas: [],
+            aristasReinfeccion: []
         };
         
-        // Agregar países como nodos
-        mundo.paises.forEach(pais => {
+        mundo.regiones.forEach(region => {
             grafo.nodos.push({
-                id: pais.id,
-                nombre: pais.nombre,
-                estado: pais.estadoInfeccioso,
-                valor: pais.estadoPoblacion.infectada
+                id: region.id,
+                nombre: region.nombre,
+                estado: region.estadoInfeccioso,
+                infectados: region.estadoPoblacion.infectada,
+                recuperados: region.estadoPoblacion.recuperada,
+                reinfectados: region.estadoPoblacion.reinfectados,
+                factorTransmision: region.factorTransmision,
+                enCuarentena: region.enCuarentena,
+                susceptibleReinfeccion: Math.max(0, region.estadoPoblacion.recuperada * 0.1)
             });
         });
         
-        // Generar aristas con probabilidades
         mundo.rutas.forEach(ruta => {
-            if (ruta.activa) {
-                let probabilidad = ruta.calcularProbabilidadBase();
+            if (ruta.activa && !ruta.cortada) {
+                const regionOrigen = mundo.obtenerRegionPorId(ruta.idOrigen);
+                const regionDestino = mundo.obtenerRegionPorId(ruta.idDestino);
                 
-                // Ajustar por vías prevalentes
+                if (!regionOrigen || !regionDestino) return;
+                
+                if (regionOrigen.enCuarentena || regionDestino.enCuarentena) return;
+                
+                let probabilidad = ruta.calcularProbabilidadBase(this.tasaContagio);
+                
                 if (this.viaPrevaleciente.includes(ruta.tipo)) {
                     probabilidad *= 1.5;
                 }
                 
-                // Ajustar por tasa de contagio de la enfermedad
-                probabilidad *= this.tasaContagio;
+                probabilidad *= regionDestino.factorTransmision;
                 
-                // Ajustar por medidas en el país destino
-                const paisDestino = mundo.obtenerPaisPorId(ruta.idDestino);
-                if (paisDestino) {
-                    probabilidad *= paisDestino.factorTransmision;
-                }
+                let probabilidadReinfeccion = probabilidad * this.factorReduccionReinfeccion;
                 
-                // Limitar probabilidad máxima
-                probabilidad = Math.min(probabilidad, 0.99);
+                const proporcionRecuperados = regionDestino.estadoPoblacion.recuperada / 
+                                            regionDestino.estadoPoblacion.total;
+                probabilidadReinfeccion *= (1 - proporcionRecuperados * 0.7);
                 
                 grafo.aristas.push({
                     origen: ruta.idOrigen,
                     destino: ruta.idDestino,
                     tipo: ruta.tipo,
-                    probabilidad: probabilidad,
-                    distancia: ruta.distancia
+                    probabilidad: Math.min(probabilidad, 0.99),
+                    distancia: ruta.distancia,
+                    esReinfeccion: false
                 });
+                
+                if (regionDestino.estadoPoblacion.recuperada > 0) {
+                    grafo.aristasReinfeccion.push({
+                        origen: ruta.idOrigen,
+                        destino: ruta.idDestino,
+                        tipo: ruta.tipo,
+                        probabilidad: Math.min(probabilidadReinfeccion, 0.5),
+                        distancia: ruta.distancia,
+                        esReinfeccion: true,
+                        factorReduccion: this.factorReduccionReinfeccion
+                    });
+                }
             }
         });
         
@@ -235,20 +488,43 @@ class Enfermedad {
 }
 
 class Mundo {
-    constructor() {
-        this.paises = [];
+    constructor(configMapa = 'mundo') {
+        this.regiones = [];
         this.rutas = [];
         this.matrizAdyacencia = [];
-        this.tablaPaises = new Map();
+        this.tablaRegiones = new Map();
         this.tablaRutas = new Map();
         this.idCounter = 0;
+        this.configMapa = configMapa;
         
-        // Países iniciales de ejemplo
-        this.inicializarPaisesEjemplo();
+        this.cargarMapa(configMapa);
+        this.crearRutasAleatorias();
+        this.sincronizarEstructuras();
     }
 
-    inicializarPaisesEjemplo() {
-        const paisesEjemplo = [
+    cargarMapa(tipoMapa) {
+        this.regiones = [];
+        this.tablaRegiones.clear();
+        this.idCounter = 0;
+        
+        switch(tipoMapa) {
+            case 'mundo':
+                this.cargarMapaMundo();
+                break;
+            case 'america_latina':
+                this.cargarMapaAmericaLatina();
+                break;
+            case 'colombia':
+                this.cargarMapaColombia();
+                break;
+            default:
+                this.cargarMapaMundo();
+        }
+        this.configMapa = tipoMapa;
+    }
+
+    cargarMapaMundo() {
+        const regionesMundo = [
             { nombre: "México", poblacion: 128.9, lat: 23.6345, lng: -102.5528 },
             { nombre: "Colombia", poblacion: 51.52, lat: 4.5709, lng: -74.2973 },
             { nombre: "Argentina", poblacion: 45.81, lat: -38.4161, lng: -63.6167 },
@@ -261,156 +537,188 @@ class Mundo {
             { nombre: "India", poblacion: 1380.0, lat: 20.5937, lng: 78.9629 }
         ];
         
-        paisesEjemplo.forEach(pais => {
-            this.agregarPais(pais.nombre, pais.poblacion, pais.lat, pais.lng);
-        });
-        
-        // Crear algunas rutas iniciales
-        this.crearRutasAleatorias();
+        regionesMundo.forEach(p => this.agregarRegionDirecto(p.nombre, p.poblacion, p.lat, p.lng));
     }
 
-    agregarPais(nombre, poblacion, latitud, longitud) {
+    cargarMapaAmericaLatina() {
+        const regionesAL = [
+            { nombre: "México", poblacion: 128.9, lat: 23.6345, lng: -102.5528 },
+            { nombre: "Colombia", poblacion: 51.52, lat: 4.5709, lng: -74.2973 },
+            { nombre: "Argentina", poblacion: 45.81, lat: -38.4161, lng: -63.6167 },
+            { nombre: "Brasil", poblacion: 213.99, lat: -14.2350, lng: -51.9253 },
+            { nombre: "Chile", poblacion: 19.12, lat: -35.6751, lng: -71.5429 },
+            { nombre: "Perú", poblacion: 33.72, lat: -9.1900, lng: -75.0152 },
+            { nombre: "Venezuela", poblacion: 28.44, lat: 6.4238, lng: -66.5897 },
+            { nombre: "Ecuador", poblacion: 17.64, lat: -1.8312, lng: -78.1834 },
+            { nombre: "Uruguay", poblacion: 3.47, lat: -32.5228, lng: -55.7658 },
+            { nombre: "Paraguay", poblacion: 7.13, lat: -23.4425, lng: -58.4438 }
+        ];
+        
+        regionesAL.forEach(p => this.agregarRegionDirecto(p.nombre, p.poblacion, p.lat, p.lng));
+    }
+
+    cargarMapaColombia() {
+        const departamentos = [
+            { nombre: "Bogotá D.C.", poblacion: 7.18, lat: 4.7110, lng: -74.0721 },
+            { nombre: "Antioquia", poblacion: 6.41, lat: 6.5593, lng: -75.8281 },
+            { nombre: "Valle del Cauca", poblacion: 4.47, lat: 3.8009, lng: -76.6413 },
+            { nombre: "Cundinamarca", poblacion: 2.92, lat: 5.0264, lng: -74.0300 },
+            { nombre: "Santander", poblacion: 2.18, lat: 6.6437, lng: -73.6536 },
+            { nombre: "Atlántico", poblacion: 2.49, lat: 10.6966, lng: -74.8741 },
+            { nombre: "Bolívar", poblacion: 2.07, lat: 8.6704, lng: -74.0300 },
+            { nombre: "Nariño", poblacion: 1.63, lat: 1.2892, lng: -77.3579 },
+            { nombre: "Córdoba", poblacion: 1.78, lat: 8.0493, lng: -75.5740 },
+            { nombre: "Boyacá", poblacion: 1.22, lat: 5.4545, lng: -73.3620 }
+        ];
+        
+        departamentos.forEach(d => this.agregarRegionDirecto(d.nombre, d.poblacion, d.lat, d.lng));
+    }
+
+    agregarRegionDirecto(nombre, poblacion, latitud, longitud) {
         const id = this.idCounter++;
-        const pais = new Pais(id, nombre, poblacion, latitud, longitud);
-        
-        this.paises.push(pais);
-        this.tablaPaises.set(id, pais);
-        
-        // Expandir matriz
-        for (let i = 0; i < this.matrizAdyacencia.length; i++) {
-            this.matrizAdyacencia[i].push(0);
-        }
-        const nuevaFila = new Array(this.paises.length).fill(0);
-        this.matrizAdyacencia.push(nuevaFila);
-        
-        return pais;
+        const region = new Region(id, nombre, poblacion, latitud, longitud);
+        this.regiones.push(region);
+        this.tablaRegiones.set(id, region);
+        return region;
     }
 
-    eliminarPais(id) {
-        const index = this.paises.findIndex(p => p.id === id);
-        if (index === -1) return false;
+    sincronizarEstructuras() {
+        this.tablaRegiones.clear();
+        this.regiones.forEach(region => this.tablaRegiones.set(region.id, region));
         
-        // Eliminar de la lista
-        this.paises.splice(index, 1);
-        this.tablaPaises.delete(id);
+        const n = this.regiones.length;
+        this.matrizAdyacencia = [];
+        for (let i = 0; i < n; i++) this.matrizAdyacencia[i] = new Array(n).fill(0);
         
-        // Eliminar fila y columna de la matriz
-        this.matrizAdyacencia.splice(index, 1);
-        for (let i = 0; i < this.matrizAdyacencia.length; i++) {
-            this.matrizAdyacencia[i].splice(index, 1);
-        }
-        
-        // Eliminar rutas asociadas
-        const rutasAEliminar = [];
-        this.tablaRutas.forEach((ruta, key) => {
-            if (ruta.idOrigen === id || ruta.idDestino === id) {
-                rutasAEliminar.push(key);
+        this.tablaRutas.forEach((ruta, clave) => {
+            const [idOrigen, idDestino] = clave.split('-').map(Number);
+            const idxOrigen = this.regiones.findIndex(p => p.id === idOrigen);
+            const idxDestino = this.regiones.findIndex(p => p.id === idDestino);
+            
+            if (idxOrigen !== -1 && idxDestino !== -1) {
+                this.matrizAdyacencia[idxOrigen][idxDestino] = 1;
+                this.matrizAdyacencia[idxDestino][idxOrigen] = 1;
             }
         });
         
-        rutasAEliminar.forEach(key => {
-            this.tablaRutas.delete(key);
-        });
-        
         this.rutas = Array.from(this.tablaRutas.values());
-        
-        return true;
+    }
+
+    obtenerRegionPorId(id) {
+        return this.tablaRegiones.get(id);
+    }
+
+    obtenerRegionPorNombre(nombre) {
+        return this.regiones.find(r => r.nombre === nombre);
     }
 
     agregarRuta(idOrigen, idDestino, tipo, trafico = 0.5) {
-        const paisOrigen = this.obtenerPaisPorId(idOrigen);
-        const paisDestino = this.obtenerPaisPorId(idDestino);
+        const regionOrigen = this.obtenerRegionPorId(idOrigen);
+        const regionDestino = this.obtenerRegionPorId(idDestino);
         
-        if (!paisOrigen || !paisDestino || idOrigen === idDestino) {
-            return null;
-        }
+        if (!regionOrigen || !regionDestino || idOrigen === idDestino) return null;
         
-        // Asegurar que idOrigen < idDestino para mantener consistencia
         const [menorId, mayorId] = idOrigen < idDestino ? 
             [idOrigen, idDestino] : [idDestino, idOrigen];
         
-        // Calcular distancia aproximada
         const distancia = this.calcularDistancia(
-            paisOrigen.coordenadas.latitud, paisOrigen.coordenadas.longitud,
-            paisDestino.coordenadas.latitud, paisDestino.coordenadas.longitud
+            regionOrigen.coordenadas.latitud, regionOrigen.coordenadas.longitud,
+            regionDestino.coordenadas.latitud, regionDestino.coordenadas.longitud
         );
         
         const ruta = new RutaTransmision(menorId, mayorId, tipo, trafico, distancia);
         const clave = `${menorId}-${mayorId}`;
-        
-        // Actualizar matriz simétricamente - RUTA BIDIRECCIONAL
-        this.matrizAdyacencia[menorId][mayorId] = 1;
-        this.matrizAdyacencia[mayorId][menorId] = 1;
-        
-        // Almacenar en tabla hash
         this.tablaRutas.set(clave, ruta);
-        this.rutas.push(ruta);
-        
+        this.sincronizarEstructuras();
         return ruta;
     }
 
     eliminarRuta(idOrigen, idDestino) {
-        // Ordenar IDs para clave consistente
         const [menorId, mayorId] = idOrigen < idDestino ? 
             [idOrigen, idDestino] : [idDestino, idOrigen];
         const clave = `${menorId}-${mayorId}`;
         
         if (this.tablaRutas.has(clave)) {
             this.tablaRutas.delete(clave);
-            // Actualizar matriz simétricamente - ELIMINAR BIDIRECCIONAL
-            this.matrizAdyacencia[menorId][mayorId] = 0;
-            this.matrizAdyacencia[mayorId][menorId] = 0;
-            this.rutas = Array.from(this.tablaRutas.values());
+            this.sincronizarEstructuras();
             return true;
         }
-        
         return false;
     }
 
-    obtenerPaisPorNombre(nombre) {
-        return this.paises.find(p => p.nombre.toLowerCase() === nombre.toLowerCase());
+    cortarRutasRegion(regionId) {
+        const region = this.obtenerRegionPorId(regionId);
+        if (!region) return false;
+        
+        region.rutasCortadas = [];
+        let rutasCortadas = 0;
+        
+        this.tablaRutas.forEach((ruta, clave) => {
+            if ((ruta.idOrigen === regionId || ruta.idDestino === regionId) && ruta.activa && !ruta.cortada) {
+                ruta.cortar();
+                region.rutasCortadas.push(clave);
+                rutasCortadas++;
+            }
+        });
+        
+        return rutasCortadas > 0;
     }
 
-    obtenerPaisPorId(id) {
-        return this.tablaPaises.get(id);
+    restaurarRutasRegion(regionId) {
+        const region = this.obtenerRegionPorId(regionId);
+        if (!region) return false;
+        
+        let rutasRestauradas = 0;
+        
+        region.rutasCortadas.forEach(clave => {
+            const ruta = this.tablaRutas.get(clave);
+            if (ruta) {
+                ruta.restaurar();
+                rutasRestauradas++;
+            }
+        });
+        
+        region.rutasCortadas = [];
+        return rutasRestauradas > 0;
     }
 
-    obtenerRutasDesde(paisId) {
+    obtenerRutasConectadas(regionId) {
         const rutasDesde = [];
         this.tablaRutas.forEach(ruta => {
-            // Una ruta bidireccional puede ser origen o destino
-            if ((ruta.idOrigen === paisId || ruta.idDestino === paisId) && ruta.activa) {
-                // Determinar la dirección real
-                const esOrigen = ruta.idOrigen === paisId;
-                const otroPaisId = esOrigen ? ruta.idDestino : ruta.idOrigen;
-                
+            if ((ruta.idOrigen === regionId || ruta.idDestino === regionId) && ruta.activa) {
+                const esOrigen = ruta.idOrigen === regionId;
+                const otraRegionId = esOrigen ? ruta.idDestino : ruta.idOrigen;
                 rutasDesde.push({
-                    ...ruta,
+                    ...ruta, 
                     direccion: esOrigen ? 'salida' : 'entrada',
-                    paisConectadoId: otroPaisId
+                    regionConectadaId: otraRegionId
                 });
             }
         });
         return rutasDesde;
     }
 
-    obtenerRutasConectadas(paisId) {
-        return this.obtenerRutasDesde(paisId);
+    obtenerRutasActivasConectadas(regionId) {
+        return this.obtenerRutasConectadas(regionId).filter(r => !r.cortada);
     }
 
     obtenerMatrizVisualizacion() {
         const matriz = [];
-        const encabezado = ['País', ...this.paises.map(p => p.nombre.substring(0, 3))];
+        const encabezado = ['Región', ...this.regiones.map(p => p.nombre.substring(0, 3))];
         matriz.push(encabezado);
         
-        this.paises.forEach((pais, i) => {
-            const fila = [pais.nombre.substring(0, 10)];
-            this.paises.forEach((_, j) => {
+        this.regiones.forEach((region, i) => {
+            const fila = [region.nombre.substring(0, 10)];
+            this.regiones.forEach((_, j) => {
                 if (j >= i) {
-                    // Mostrar solo diagonal superior
-                    fila.push(this.matrizAdyacencia[i][j] || 0);
+                    const clave = `${Math.min(i, j)}-${Math.max(i, j)}`;
+                    const ruta = this.tablaRutas.get(clave);
+                    if (ruta) {
+                        fila.push(ruta.cortada ? 'X' : '1');
+                    } else {
+                        fila.push(0);
+                    }
                 } else {
-                    // Para diagonal inferior, mostrar "·" para indicar simetría
                     fila.push('·');
                 }
             });
@@ -420,28 +728,8 @@ class Mundo {
         return matriz;
     }
 
-    actualizarMatrizDesdeUI(nuevaMatriz) {
-        // Sincronizar cambios de la UI
-        for (let i = 0; i < this.paises.length; i++) {
-            for (let j = 0; j < this.paises.length; j++) {
-                const valor = nuevaMatriz[i][j];
-                const clave = `${i}-${j}`;
-                
-                if (valor === 1 && this.matrizAdyacencia[i][j] === 0) {
-                    // Nueva ruta
-                    const tipo = Math.random() > 0.5 ? 'AEREO' : 'TERRESTRE';
-                    this.agregarRuta(i, j, tipo, Math.random());
-                } else if (valor === 0 && this.matrizAdyacencia[i][j] === 1) {
-                    // Eliminar ruta
-                    this.eliminarRuta(i, j);
-                }
-            }
-        }
-    }
-
     calcularDistancia(lat1, lon1, lat2, lon2) {
-        // Fórmula de Haversine simplificada
-        const R = 6371; // Radio de la Tierra en km
+        const R = 6371;
         const dLat = (lat2 - lat1) * Math.PI / 180;
         const dLon = (lon2 - lon1) * Math.PI / 180;
         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -453,16 +741,34 @@ class Mundo {
 
     crearRutasAleatorias() {
         const tipos = ['AEREO', 'TERRESTRE', 'MARITIMO'];
+        const densidad = this.configMapa === 'colombia' ? 0.6 : 0.4;
         
-        // Solo recorrer triángulo superior para evitar duplicados
-        for (let i = 0; i < this.paises.length; i++) {
-            for (let j = i + 1; j < this.paises.length; j++) {
-                if (Math.random() > 0.7) {
+        for (let i = 0; i < this.regiones.length; i++) {
+            for (let j = i + 1; j < this.regiones.length; j++) {
+                if (Math.random() < densidad) {
                     const tipo = tipos[Math.floor(Math.random() * tipos.length)];
-                    this.agregarRuta(i, j, tipo, Math.random());
+                    const trafico = 0.3 + Math.random() * 0.5;
+                    this.agregarRuta(i, j, tipo, trafico);
                 }
             }
         }
+    }
+
+    obtenerEstadisticasRutas() {
+        let totalRutas = this.rutas.length;
+        let rutasAereas = this.rutas.filter(r => r.tipo === 'AEREO').length;
+        let rutasTerrestres = this.rutas.filter(r => r.tipo === 'TERRESTRE').length;
+        let rutasMaritimas = this.rutas.filter(r => r.tipo === 'MARITIMO').length;
+        let rutasCortadas = this.rutas.filter(r => r.cortada).length;
+        
+        return {
+            totalRutas,
+            rutasAereas,
+            rutasTerrestres,
+            rutasMaritimas,
+            rutasCortadas,
+            porcentajeCortadas: totalRutas > 0 ? (rutasCortadas / totalRutas * 100).toFixed(1) : 0
+        };
     }
 }
 
@@ -475,25 +781,23 @@ class Simulacion {
         this.configuracion = {
             velocidad: 5,
             pausada: true,
-            propagacionInterna: true
+            propagacionInterna: true,
+            propagacionExterna: true,
+            permitirReinfecciones: true,
+            velocidadPropagacion: 1.0
         };
         this.historial = [];
         this.inicializar();
     }
 
     inicializar() {
-        // Establecer país origen como infectado
-        if (this.enfermedad.paisOrigen !== null) {
-            const paisOrigen = this.mundo.obtenerPaisPorId(this.enfermedad.paisOrigen);
-            if (paisOrigen) {
-                const infectadosIniciales = Math.max(1000, paisOrigen.estadoPoblacion.total * 0.0001);
-                paisOrigen.actualizarEstado({
-                    susceptible: paisOrigen.estadoPoblacion.susceptible - infectadosIniciales,
-                    infectada: infectadosIniciales
-                });
+        if (this.enfermedad.regionOrigen !== null) {
+            const regionOrigen = this.mundo.obtenerRegionPorId(this.enfermedad.regionOrigen);
+            if (regionOrigen) {
+                const infectadosIniciales = Math.max(1000, regionOrigen.estadoPoblacion.total * 0.0001);
+                regionOrigen.agregarInfeccion(infectadosIniciales, this.fechaActual, false);
             }
         }
-        
         this.regenerarGrafo();
         this.guardarSnapshot();
     }
@@ -505,211 +809,190 @@ class Simulacion {
     avanzarUnDia() {
         if (this.configuracion.pausada) return;
         
-        // Evolucionar enfermedad
         this.enfermedad.evolucionar(1);
         this.fechaActual++;
-        
-        // Regenerar grafo con nueva configuración
         this.regenerarGrafo();
         
-        // Propagar dentro de cada país
+        this.mundo.regiones.forEach(region => {
+            region.procesarCohortes(this.fechaActual, this.enfermedad);
+        });
+        
         if (this.configuracion.propagacionInterna) {
-            this.mundo.paises.forEach(pais => {
-                this.propagarInternamente(pais);
-            });
+            this.mundo.regiones.forEach(region => this.propagarInternamente(region));
         }
         
-        // Propagar entre países según grafo probabilístico
-        this.propagarEntrePaises();
-        
-        // Actualizar recuperaciones y fallecimientos
-        this.actualizarEstados();
-        
+        if (this.configuracion.propagacionExterna) this.propagarEntreRegiones();
         this.guardarSnapshot();
     }
 
-    propagarInternamente(pais) {
-        if (pais.estadoPoblacion.infectada === 0 || pais.estadoPoblacion.susceptible === 0) {
-            return;
-        }
+    propagarInternamente(region) {
+        if (region.estadoPoblacion.infectada === 0 || region.estadoPoblacion.susceptible === 0 || region.enCuarentena) return;
         
-        // Tasa de contacto base ajustada
-        const tasaContactoBase = 8; // Reducida de 10 a 8
+        const tasaContactoBase = 10 * this.configuracion.velocidadPropagacion;
+        const contactosTotales = tasaContactoBase * region.estadoPoblacion.total;
+        const proporcionInfectados = region.estadoPoblacion.infectada / region.estadoPoblacion.total;
+        const contactosInfectados = contactosTotales * proporcionInfectados;
+        const factorMedidas = region.factorTransmision;
         
-        // Probabilidad de contagio por contacto
-        const probabilidadContagio = this.enfermedad.tasaContagio;
+        const contactosEfectivos = contactosInfectados * factorMedidas;
         
-        // Factor por medidas del país
-        const factorMedidas = pais.factorTransmision;
+        const proporcionSusceptibles = region.estadoPoblacion.susceptible / 
+                                     (region.estadoPoblacion.total - region.estadoPoblacion.infectada);
+        const contactosConSusceptibles = contactosEfectivos * proporcionSusceptibles;
         
-        // Densidad poblacional aproximada (infectados/total)
-        const densidad = pais.estadoPoblacion.infectada / pais.estadoPoblacion.total;
-        const factorDensidad = 0.3 + (densidad * 0.7); // Entre 0.3 y 1
-        
-        // Calcular nuevos infectados con límites más estrictos
-        const contactosEfectivos = tasaContactoBase * pais.estadoPoblacion.infectada;
-        const contactosConSusceptibles = contactosEfectivos * 
-            (pais.estadoPoblacion.susceptible / pais.estadoPoblacion.total);
+        const probabilidadContagio = this.enfermedad.calcularProbabilidadInfeccion(1, false);
         
         let nuevosInfectados = Math.floor(
-            contactosConSusceptibles * 
-            probabilidadContagio * 
-            factorMedidas * 
-            factorDensidad
+            contactosConSusceptibles * probabilidadContagio
         );
         
-        // Límites más estrictos
-        nuevosInfectados = Math.max(nuevosInfectados, 0); // No negativo
+        nuevosInfectados = Math.max(nuevosInfectados, 0);
         nuevosInfectados = Math.min(
             nuevosInfectados,
-            pais.estadoPoblacion.susceptible,
-            Math.ceil(pais.estadoPoblacion.susceptible * 0.1) // Máximo 10% de susceptibles por día
+            region.estadoPoblacion.susceptible,
+            Math.ceil(region.estadoPoblacion.susceptible * 0.05)
         );
         
         if (nuevosInfectados > 0) {
-            pais.actualizarEstado({
-                susceptible: pais.estadoPoblacion.susceptible - nuevosInfectados,
-                infectada: pais.estadoPoblacion.infectada + nuevosInfectados
+            region.agregarInfeccion(nuevosInfectados, this.fechaActual, false);
+        }
+        
+        if (this.configuracion.permitirReinfecciones && region.estadoPoblacion.recuperada > 0 && !region.enCuarentena) {
+            this.propagarReinfeccionInterna(region);
+        }
+    }
+
+    propagarReinfeccionInterna(region) {
+        const tasaContactoRecuperados = 6 * this.configuracion.velocidadPropagacion;
+        const contactosRecuperados = tasaContactoRecuperados * region.estadoPoblacion.recuperada;
+        const proporcionInfectados = region.estadoPoblacion.infectada / region.estadoPoblacion.total;
+        const contactosConInfectados = contactosRecuperados * proporcionInfectados;
+        
+        const probabilidadReinfeccion = this.enfermedad.calcularProbabilidadInfeccion(2, true);
+        
+        let posiblesReinfecciones = Math.floor(
+            contactosConInfectados * probabilidadReinfeccion
+        );
+        
+        posiblesReinfecciones = Math.min(
+            posiblesReinfecciones,
+            region.estadoPoblacion.recuperada,
+            Math.ceil(region.estadoPoblacion.recuperada * 0.01)
+        );
+        
+        if (posiblesReinfecciones > 0) {
+            region.agregarInfeccion(posiblesReinfecciones, this.fechaActual, true);
+        }
+    }
+
+    propagarEntreRegiones() {
+        this.grafoProbabilistico.aristas.forEach(arista => {
+            this.propagarPorArista(arista, false);
+        });
+        
+        if (this.configuracion.permitirReinfecciones && this.grafoProbabilistico.aristasReinfeccion) {
+            this.grafoProbabilistico.aristasReinfeccion.forEach(arista => {
+                this.propagarPorArista(arista, true);
             });
         }
     }
 
-    propagarEntrePaises() {
-        this.grafoProbabilistico.aristas.forEach(arista => {
-            // En una ruta bidireccional, la propagación puede ir en ambos sentidos
-            const direcciones = [
-                { origen: arista.origen, destino: arista.destino },
-                { origen: arista.destino, destino: arista.origen }
-            ];
+    propagarPorArista(arista, esReinfeccion) {
+        const direcciones = [
+            { origen: arista.origen, destino: arista.destino },
+            { origen: arista.destino, destino: arista.origen }
+        ];
+        
+        direcciones.forEach(dir => {
+            const regionOrigen = this.mundo.obtenerRegionPorId(dir.origen);
+            const regionDestino = this.mundo.obtenerRegionPorId(dir.destino);
             
-            direcciones.forEach(dir => {
-                const paisOrigen = this.mundo.obtenerPaisPorId(dir.origen);
-                const paisDestino = this.mundo.obtenerPaisPorId(dir.destino);
+            if (!regionOrigen || !regionDestino || regionOrigen.estadoPoblacion.infectada === 0) return;
+            
+            if (regionDestino.enCuarentena) return;
+            
+            const factorOrigen = regionOrigen.estadoPoblacion.infectada / regionOrigen.estadoPoblacion.total;
+            const posibilidad = arista.probabilidad * factorOrigen * 0.3;
+            
+            if (Math.random() < posibilidad) {
+                const factorPoblacion = Math.sqrt(regionDestino.estadoPoblacion.total) / 10000;
+                let baseInfectados = Math.max(1, Math.floor(factorPoblacion * 10));
                 
-                if (!paisOrigen || !paisDestino || paisOrigen.estadoPoblacion.infectada === 0) {
-                    return;
+                if (esReinfeccion) {
+                    baseInfectados = Math.max(1, Math.floor(baseInfectados * 0.1));
                 }
                 
-                // Calcular posibilidad de contagio (misma lógica que antes)
-                const factorOrigen = paisOrigen.estadoPoblacion.infectada / paisOrigen.estadoPoblacion.total;
-                const posibilidad = arista.probabilidad * factorOrigen * 0.7; // Reducir un poco por ser bidireccional
-                
-                if (Math.random() < posibilidad) {
-                    // Contagio exitoso
-                    const nuevosInfectados = Math.max(
-                        1,
-                        Math.floor(paisDestino.estadoPoblacion.susceptible * 0.001)
+                let nuevosInfectados = baseInfectados;
+                if (esReinfeccion) {
+                    nuevosInfectados = Math.min(
+                        nuevosInfectados,
+                        Math.floor(regionDestino.estadoPoblacion.recuperada * 0.1)
                     );
-                    
-                    if (nuevosInfectados > 0 && paisDestino.estadoPoblacion.susceptible > 0) {
-                        paisDestino.actualizarEstado({
-                            susceptible: paisDestino.estadoPoblacion.susceptible - nuevosInfectados,
-                            infectada: paisDestino.estadoPoblacion.infectada + nuevosInfectados
-                        });
-                    }
+                } else {
+                    nuevosInfectados = Math.min(
+                        nuevosInfectados,
+                        regionDestino.estadoPoblacion.susceptible
+                    );
                 }
-            });
-        });
-    }
-
-    actualizarEstados() {
-        this.mundo.paises.forEach(pais => {
-            if (pais.estadoPoblacion.infectada > 0) {
-                // Calcular recuperaciones BASADAS EN EL TIEMPO DE RECUPERACIÓN
-                const diasParaRecuperar = this.enfermedad.tiempoRecuperacion;
                 
-                // Porcentaje de infectados que se recuperan/fallecen cada día
-                const porcentajeDiario = 1 / diasParaRecuperar; // Ej: 1/14 = ~7% por día
-                
-                // Número de personas que cambian de estado hoy
-                const cambioHoy = Math.ceil(pais.estadoPoblacion.infectada * porcentajeDiario);
-                
-                if (cambioHoy > 0) {
-                    // Calcular cuántos fallecen y cuántos se recuperan
-                    const fallecidos = Math.floor(cambioHoy * this.enfermedad.tasaMortalidad);
-                    const recuperados = cambioHoy - fallecidos;
-                    
-                    // Asegurar que no haya números negativos
-                    const infectadosRestantes = Math.max(0, pais.estadoPoblacion.infectada - cambioHoy);
-                    const nuevosRecuperados = Math.min(recuperados, pais.estadoPoblacion.infectada - fallecidos);
-                    const nuevosFallecidos = Math.min(fallecidos, pais.estadoPoblacion.infectada);
-                    
-                    // Actualizar estado
-                    pais.actualizarEstado({
-                        infectada: infectadosRestantes,
-                        recuperada: pais.estadoPoblacion.recuperada + nuevosRecuperados,
-                        fallecida: pais.estadoPoblacion.fallecida + nuevosFallecidos
-                    });
-                    
-                    // Si ya no hay infectados, cambiar estado a RECUPERADO
-                    if (pais.estadoPoblacion.infectada === 0 && pais.estadoPoblacion.recuperada > 0) {
-                        pais.estadoInfeccioso = 'RECUPERADO';
-                    }
+                if (nuevosInfectados > 0) {
+                    regionDestino.agregarInfeccion(nuevosInfectados, this.fechaActual, esReinfeccion);
                 }
             }
         });
-    }
-
-    retrocederUnDia() {
-        if (this.historial.length > 1) {
-            this.historial.pop(); // Eliminar estado actual
-            const estadoAnterior = this.historial[this.historial.length - 1];
-            this.restaurarSnapshot(estadoAnterior);
-            this.fechaActual--;
-        }
     }
 
     guardarSnapshot() {
         const snapshot = {
             fecha: this.fechaActual,
-            paises: this.mundo.paises.map(p => ({
-                ...p,
+            regiones: this.mundo.regiones.map(p => ({
+                id: p.id,
+                nombre: p.nombre,
                 estadoPoblacion: { ...p.estadoPoblacion },
-                medidasVigentes: [...p.medidasVigentes]
-            }))
+                medidasVigentes: [...p.medidasVigentes],
+                estadoInfeccioso: p.estadoInfeccioso,
+                enCuarentena: p.enCuarentena,
+                cohortesInfectados: p.cohortesInfectados.map(c => ({...c})),
+                cohortesRecuperados: p.cohortesRecuperados.map(c => ({...c}))
+            })),
+            enfermedad: {
+                nombre: this.enfermedad.nombre,
+                tasaContagio: this.enfermedad.tasaContagio,
+                tasaMortalidad: this.enfermedad.tasaMortalidad,
+                variantes: [...this.enfermedad.variantes]
+            }
         };
         this.historial.push(snapshot);
-    }
-
-    restaurarSnapshot(snapshot) {
-        this.fechaActual = snapshot.fecha;
         
-        snapshot.paises.forEach(paisSnapshot => {
-            const pais = this.mundo.obtenerPaisPorId(paisSnapshot.id);
-            if (pais) {
-                pais.estadoPoblacion = { ...paisSnapshot.estadoPoblacion };
-                pais.medidasVigentes = [...paisSnapshot.medidasVigentes];
-                pais.estadoInfeccioso = paisSnapshot.estadoInfeccioso;
-                pais.calcularFactorTransmision();
-            }
-        });
+        if (this.historial.length > 100) {
+            this.historial.shift();
+        }
     }
 
     obtenerEstadisticasGlobales() {
-        let totalInfectados = 0;
-        let totalFallecidos = 0;
-        let paisesAfectados = 0;
+        let totalInfectados = 0, totalFallecidos = 0, totalRecuperados = 0, totalReinfectados = 0;
+        let regionesAfectadas = 0, regionesConReinfeccion = 0, regionesEnCuarentena = 0;
         
-        this.mundo.paises.forEach(pais => {
-            totalInfectados += pais.estadoPoblacion.infectada;
-            totalFallecidos += pais.estadoPoblacion.fallecida;
+        this.mundo.regiones.forEach(region => {
+            totalInfectados += region.estadoPoblacion.infectada;
+            totalFallecidos += region.estadoPoblacion.fallecida;
+            totalRecuperados += region.estadoPoblacion.recuperada;
+            totalReinfectados += region.estadoPoblacion.reinfectados;
             
-            if (pais.estadoPoblacion.infectada > 0) {
-                paisesAfectados++;
-            }
+            if (region.estadoPoblacion.infectada > 0) regionesAfectadas++;
+            if (region.estadoPoblacion.reinfectados > 0) regionesConReinfeccion++;
+            if (region.enCuarentena) regionesEnCuarentena++;
         });
         
-        // Calcular tasa de propagación REAL basada en el crecimiento actual
         let tasaPropagacion = 0;
         if (this.historial.length > 1) {
             const estadoActual = this.historial[this.historial.length - 1];
             const estadoAnterior = this.historial[this.historial.length - 2];
             
-            let infectadosActual = 0;
-            let infectadosAnterior = 0;
+            let infectadosActual = 0, infectadosAnterior = 0;
             
-            estadoActual.paises.forEach(p => infectadosActual += p.estadoPoblacion.infectada);
-            estadoAnterior.paises.forEach(p => infectadosAnterior += p.estadoPoblacion.infectada);
+            estadoActual.regiones.forEach(p => infectadosActual += p.estadoPoblacion.infectada);
+            estadoAnterior.regiones.forEach(p => infectadosAnterior += p.estadoPoblacion.infectada);
             
             if (infectadosAnterior > 0) {
                 tasaPropagacion = (infectadosActual - infectadosAnterior) / infectadosAnterior;
@@ -719,9 +1002,44 @@ class Simulacion {
         return {
             totalInfectados,
             totalFallecidos,
-            paisesAfectados,
-            tasaPropagacion: tasaPropagacion // Ahora es una tasa porcentual
+            totalRecuperados,
+            totalReinfectados,
+            regionesAfectadas,
+            regionesConReinfeccion,
+            regionesEnCuarentena,
+            tasaPropagacion,
+            fechaActual: this.fechaActual,
+            totalPoblacion: this.mundo.regiones.reduce((sum, r) => sum + r.estadoPoblacion.total, 0)
         };
+    }
+
+    predecirProximoDia() {
+        const estadisticas = this.obtenerEstadisticasGlobales();
+        const crecimiento = estadisticas.tasaPropagacion * 100;
+        
+        let prediccion = {
+            crecimientoEsperado: crecimiento,
+            riesgoExpansion: 'BAJO',
+            regionesCriticas: []
+        };
+        
+        if (crecimiento > 10) {
+            prediccion.riesgoExpansion = 'ALTO';
+        } else if (crecimiento > 5) {
+            prediccion.riesgoExpansion = 'MEDIO';
+        }
+        
+        this.mundo.regiones.forEach(region => {
+            if (region.estadoPoblacion.infectada > region.estadoPoblacion.total * 0.05) {
+                prediccion.regionesCriticas.push({
+                    nombre: region.nombre,
+                    porcentajeInfectado: (region.estadoPoblacion.infectada / region.estadoPoblacion.total * 100).toFixed(1),
+                    enCuarentena: region.enCuarentena
+                });
+            }
+        });
+        
+        return prediccion;
     }
 }
 
@@ -731,61 +1049,352 @@ class Simulacion {
 
 class ControladorAplicacion {
     constructor() {
-        this.mundo = new Mundo();
-        this.enfermedad = null;
-        this.simulacion = null;
+        this.mundo = new Mundo('mundo');
+        this.enfermedad = new Enfermedad("COVID-19", 30, 2, 14, null);
+        this.simulacion = new Simulacion(this.mundo, this.enfermedad);
         this.intervaloSimulacion = null;
-        this.paisSeleccionado = null;
+        this.regionSeleccionada = null;
         this.matrizVisible = true;
-        this.rutaEditando = null; // {fila, columna, tipoActual}
+        this.rutaEditando = null;
         this.tipoRutaSeleccionado = null;
+        
+        this.mapaPrincipal = null;
+        this.mapaAnalisis = null;
+        this.capasRegiones = {};
+        this.capasRutas = {};
+        this.marcadoresRegiones = {};
         
         this.inicializarUI();
         this.inicializarEventos();
-        this.inicializarEventosTipoRuta();
-        this.actualizarUI();
     }
 
     inicializarUI() {
-        // Llenar lista de países
-        this.actualizarListaPaises();
+        const selectMapa = document.getElementById('selectorMapa');
+        if (selectMapa) {
+            selectMapa.value = 'mundo';
+        }
         
-        // Llenar selector de país origen
-        const selectOrigen = document.getElementById('paisOrigen');
-        selectOrigen.innerHTML = '<option value="null">Seleccionar...</option>';
-        this.mundo.paises.forEach(pais => {
-            const option = document.createElement('option');
-            option.value = pais.id;
-            option.textContent = pais.nombre;
-            selectOrigen.appendChild(option);
+        this.actualizarListaRegiones();
+        this.actualizarSelectorOrigen();
+        this.generarMatrizVisual();
+        this.inicializarMapas();
+        
+        const toggleReinfecciones = document.getElementById('toggleReinfecciones');
+        if (toggleReinfecciones) {
+            toggleReinfecciones.addEventListener('change', (e) => {
+                this.simulacion.configuracion.permitirReinfecciones = e.target.checked;
+                this.mostrarMensaje(`Reinfecciones ${e.target.checked ? 'activadas' : 'desactivadas'}`);
+            });
+        }
+    }
+
+    inicializarMapas() {
+        this.mapaPrincipal = L.map('mapaCanvas').setView([20, 0], 2);
+        this.actualizarCapaBase();
+        
+        this.mapaAnalisis = L.map('mapaAnalisisCanvas').setView([20, 0], 2);
+        this.actualizarCapaBaseAnalisis();
+        
+        this.dibujarMapaPrincipal();
+    }
+
+    actualizarCapaBase() {
+        if (!this.mapaPrincipal) return;
+        
+        this.mapaPrincipal.eachLayer(layer => this.mapaPrincipal.removeLayer(layer));
+        
+        let urlTemplate, atribucion, viewCoords, zoomLevel;
+        
+        switch(this.mundo.configMapa) {
+            case 'mundo':
+                urlTemplate = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+                atribucion = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+                viewCoords = [20, 0];
+                zoomLevel = 2;
+                break;
+            case 'america_latina':
+                urlTemplate = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+                atribucion = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+                viewCoords = [-15, -60];
+                zoomLevel = 3;
+                break;
+            case 'colombia':
+                urlTemplate = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+                atribucion = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+                viewCoords = [4, -74];
+                zoomLevel = 5;
+                break;
+        }
+        
+        L.tileLayer(urlTemplate, {
+            attribution: atribucion,
+            maxZoom: 18,
+            minZoom: 1
+        }).addTo(this.mapaPrincipal);
+        
+        this.mapaPrincipal.setView(viewCoords, zoomLevel);
+    }
+
+    actualizarCapaBaseAnalisis() {
+        if (!this.mapaAnalisis) return;
+        
+        this.mapaAnalisis.eachLayer(layer => this.mapaAnalisis.removeLayer(layer));
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap',
+            maxZoom: 18,
+            minZoom: 1
+        }).addTo(this.mapaAnalisis);
+    }
+
+    dibujarMapaPrincipal() {
+        if (!this.mapaPrincipal || this.mundo.regiones.length === 0) return;
+        
+        Object.values(this.capasRegiones).forEach(layer => this.mapaPrincipal.removeLayer(layer));
+        Object.values(this.capasRutas).forEach(layer => this.mapaPrincipal.removeLayer(layer));
+        this.capasRegiones = {};
+        this.capasRutas = {};
+        this.marcadoresRegiones = {};
+        
+        this.mundo.rutas.forEach(ruta => {
+            const regionOrigen = this.mundo.obtenerRegionPorId(ruta.idOrigen);
+            const regionDestino = this.mundo.obtenerRegionPorId(ruta.idDestino);
+            
+            if (regionOrigen && regionDestino) {
+                const latlngs = [
+                    [regionOrigen.coordenadas.latitud, regionOrigen.coordenadas.longitud],
+                    [regionDestino.coordenadas.latitud, regionDestino.coordenadas.longitud]
+                ];
+                
+                const color = ruta.getColor();
+                const dashArray = ruta.cortada ? '5, 10' : null;
+                const opacity = ruta.cortada ? 0.3 : 0.7;
+                const weight = ruta.cortada ? 2 : 3;
+                
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: weight,
+                    opacity: opacity,
+                    dashArray: dashArray,
+                    className: 'ruta-line' + (ruta.cortada ? ' inactiva' : '')
+                }).addTo(this.mapaPrincipal);
+                
+                const probabilidad = (ruta.calcularProbabilidadBase() * 100).toFixed(1);
+                const icono = ruta.getIconoTipo();
+                const estado = ruta.cortada ? '🔒 CORTADA' : '✅ ACTIVA';
+                
+                polyline.bindTooltip(`
+                    <strong>${icono} ${regionOrigen.nombre} ↔ ${regionDestino.nombre}</strong><br>
+                    Tipo: ${ruta.tipo}<br>
+                    Distancia: ${Math.round(ruta.distancia)} km<br>
+                    Probabilidad: ${probabilidad}%<br>
+                    Estado: ${estado}
+                `);
+                
+                polyline.on('click', (e) => {
+                    this.mostrarInformacionRuta(ruta, regionOrigen, regionDestino);
+                });
+                
+                this.capasRutas[`${ruta.idOrigen}-${ruta.idDestino}`] = polyline;
+            }
         });
         
-        // Inicializar enfermedad por defecto
-        this.enfermedad = new Enfermedad(
-            document.getElementById('nombreEnfermedad').value,
-            parseFloat(document.getElementById('tasaContagio').value),
-            parseFloat(document.getElementById('tasaMortalidad').value),
-            parseInt(document.getElementById('tiempoRecuperacion').value),
-            null
-        );
+        this.mundo.regiones.forEach(region => {
+            const poblacion = region.estadoPoblacion.total / 1000000;
+            const radio = Math.max(8, Math.min(20, Math.log10(poblacion) * 5));
+            const porcentajeInfectado = (region.estadoPoblacion.infectada / region.estadoPoblacion.total * 100).toFixed(1);
+            
+            const icono = L.divIcon({
+                html: `
+                    <div class="region-marker ${region.enCuarentena ? 'cuarentena' : ''}" 
+                         style="background-color: ${region.getColorEstado()};
+                                width: ${radio * 2}px;
+                                height: ${radio * 2}px;
+                                border: 2px solid ${region.enCuarentena ? '#673AB7' : '#000'};
+                                ${region.estadoPoblacion.reinfectados > 0 ? 'border: 3px solid #9C27B0;' : ''}">
+                        <div class="marker-text">${region.getIconoEstado()}</div>
+                    </div>
+                `,
+                className: 'custom-region-marker',
+                iconSize: [radio * 2, radio * 2],
+                iconAnchor: [radio, radio]
+            });
+            
+            const marker = L.marker(
+                [region.coordenadas.latitud, region.coordenadas.longitud],
+                { icon: icono }
+            ).addTo(this.mapaPrincipal);
+            
+            let tooltip = `
+                <strong>${region.nombre}</strong><br>
+                ${region.getIconoEstado()} Estado: ${region.estadoInfeccioso}<br>
+                👥 Población: ${Math.round(poblacion * 100) / 100}M<br>
+                🤒 Infectados: ${region.estadoPoblacion.infectada.toLocaleString()} (${porcentajeInfectado}%)<br>
+            `;
+            
+            if (region.enCuarentena) {
+                tooltip += `🔒 <strong style="color: #673AB7">EN CUARENTENA</strong><br>`;
+            }
+            
+            if (region.estadoPoblacion.reinfectados > 0) {
+                tooltip += `🔄 Reinfecciones: ${region.estadoPoblacion.reinfectados.toLocaleString()}<br>`;
+            }
+            
+            tooltip += `<em>Click para más detalles</em>`;
+            
+            marker.bindTooltip(tooltip);
+            
+            marker.on('click', () => {
+                this.seleccionarRegion(region.id);
+            });
+            
+            marker.on('contextmenu', (e) => {
+                e.originalEvent.preventDefault();
+                this.mostrarMenuContextualRegion(e.latlng, region);
+            });
+            
+            if (this.regionSeleccionada === region.id) {
+                marker.getElement().style.filter = 'brightness(1.2) drop-shadow(0 0 8px gold)';
+            }
+            
+            this.capasRegiones[region.id] = marker;
+            this.marcadoresRegiones[region.id] = marker;
+        });
+    }
+
+    mostrarMenuContextualRegion(latlng, region) {
+        const menu = L.popup()
+            .setLatLng(latlng)
+            .setContent(`
+                <div class="context-menu">
+                    <h4>${region.nombre}</h4>
+                    <button onclick="controlador.aplicarMedidaRegion(${region.id}, 'cuarentena')" 
+                            class="context-btn ${region.enCuarentena ? 'active' : ''}">
+                        ${region.enCuarentena ? '🔓 Quitar Cuarentena' : '🔒 Poner en Cuarentena'}
+                    </button>
+                    <button onclick="controlador.aplicarMedidaRegion(${region.id}, 'cierre_fronteras')" 
+                            class="context-btn">
+                        ${region.medidasVigentes.includes('cierre_fronteras') ? '🌍 Reabrir Fronteras' : '🚫 Cerrar Fronteras'}
+                    </button>
+                    <button onclick="controlador.aplicarMedidaRegion(${region.id}, 'distanciamiento')" 
+                            class="context-btn">
+                        ${region.medidasVigentes.includes('distanciamiento') ? '👥 Suspender Distanciamiento' : '↔️ Aplicar Distanciamiento'}
+                    </button>
+                    <button onclick="controlador.forzarReinfeccion(${region.id})" 
+                            class="context-btn reinfeccion-btn">
+                        🔄 Forzar Reinfección
+                    </button>
+                </div>
+            `);
         
-        this.simulacion = new Simulacion(this.mundo, this.enfermedad);
+        menu.openOn(this.mapaPrincipal);
         
-        // Inicializar matriz visual
-        this.generarMatrizVisual();
+        setTimeout(() => {
+            this.mapaPrincipal.closePopup();
+        }, 10000);
+    }
+
+    mostrarInformacionRuta(ruta, regionOrigen, regionDestino) {
+        const probabilidad = (ruta.calcularProbabilidadBase() * 100).toFixed(1);
+        const probabilidadReinfeccion = (ruta.calcularProbabilidadBase() * 100 * 0.3).toFixed(1);
         
-        // Dibujar mapa inicial
-        this.dibujarMapa();
+        const contenido = `
+            <div class="ruta-info-modal">
+                <h3>${ruta.getIconoTipo()} Información de Ruta</h3>
+                <div class="ruta-details">
+                    <p><strong>Conexión:</strong> ${regionOrigen.nombre} ↔ ${regionDestino.nombre}</p>
+                    <p><strong>Tipo:</strong> ${ruta.tipo}</p>
+                    <p><strong>Distancia:</strong> ${Math.round(ruta.distancia)} km</p>
+                    <p><strong>Tiempo de viaje:</strong> ${Math.round(ruta.tiempoViajePromedio)} horas</p>
+                    <p><strong>Tráfico:</strong> ${(ruta.trafico * 100).toFixed(0)}%</p>
+                    <p><strong>Estado:</strong> ${ruta.cortada ? '<span style="color:red">🔒 CORTADA</span>' : '<span style="color:green">✅ ACTIVA</span>'}</p>
+                    <p><strong>Probabilidad de contagio:</strong> ${probabilidad}%</p>
+                    <p><strong>Probabilidad de reinfección:</strong> ${probabilidadReinfeccion}%</p>
+                </div>
+                <div class="ruta-actions">
+                    <button onclick="controlador.toggleRuta(${ruta.idOrigen}, ${ruta.idDestino})" 
+                            class="btn-small ${ruta.cortada ? 'btn-success' : 'btn-warning'}">
+                        ${ruta.cortada ? '🔓 Reactivar Ruta' : '🔒 Cortar Ruta'}
+                    </button>
+                    <button onclick="controlador.editarRutaDesdeMapa(${ruta.idOrigen}, ${ruta.idDestino})" 
+                            class="btn-small">
+                        ✏️ Cambiar Tipo
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        this.mostrarModalPersonalizado('Información de Ruta', contenido);
+    }
+
+    mostrarModalPersonalizado(titulo, contenido) {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.id = 'modalPersonalizado';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-modal" onclick="this.parentElement.parentElement.remove()">&times;</span>
+                <h3>${titulo}</h3>
+                <div class="modal-body">
+                    ${contenido}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.style.display = 'flex';
+        
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+    }
+
+    toggleRuta(idOrigen, idDestino) {
+        const clave = `${Math.min(idOrigen, idDestino)}-${Math.max(idOrigen, idDestino)}`;
+        const ruta = this.mundo.tablaRutas.get(clave);
+        
+        if (ruta) {
+            if (ruta.cortada) {
+                ruta.restaurar();
+                this.mostrarMensaje(`✅ Ruta reactivada: ${this.mundo.obtenerRegionPorId(idOrigen).nombre} ↔ ${this.mundo.obtenerRegionPorId(idDestino).nombre}`);
+            } else {
+                ruta.cortar();
+                this.mostrarMensaje(`🔒 Ruta cortada: ${this.mundo.obtenerRegionPorId(idOrigen).nombre} ↔ ${this.mundo.obtenerRegionPorId(idDestino).nombre}`);
+            }
+            
+            this.dibujarMapaPrincipal();
+            this.generarMatrizVisual();
+            this.actualizarUI();
+        }
+    }
+
+    editarRutaDesdeMapa(idOrigen, idDestino) {
+        const regionOrigen = this.mundo.obtenerRegionPorId(idOrigen);
+        const regionDestino = this.mundo.obtenerRegionPorId(idDestino);
+        
+        const clave = `${Math.min(idOrigen, idDestino)}-${Math.max(idOrigen, idDestino)}`;
+        const rutaExistente = this.mundo.tablaRutas.get(clave);
+        
+        this.rutaEditando = {
+            fila: Math.min(idOrigen, idDestino),
+            columna: Math.max(idOrigen, idDestino),
+            regionOrigenId: idOrigen,
+            regionDestinoId: idDestino,
+            tipoActual: rutaExistente ? rutaExistente.tipo : null,
+            celda: null
+        };
+        
+        this.mostrarModalTipoRuta(regionOrigen.nombre, regionDestino.nombre, rutaExistente);
     }
 
     inicializarEventos() {
-        // Controles de simulación
         document.getElementById('btnPlayPause').addEventListener('click', () => this.toggleSimulacion());
         document.getElementById('btnStep').addEventListener('click', () => this.avanzarPaso());
         document.getElementById('btnReset').addEventListener('click', () => this.reiniciarSimulacion());
         document.getElementById('velocidadSlider').addEventListener('input', (e) => this.ajustarVelocidad(e.target.value));
         
-        // Configuración de enfermedad
         document.getElementById('tasaContagio').addEventListener('input', (e) => {
             document.getElementById('valorContagio').textContent = e.target.value + '%';
         });
@@ -794,47 +1403,39 @@ class ControladorAplicacion {
         });
         document.getElementById('btnAplicarEnfermedad').addEventListener('click', () => this.aplicarConfiguracionEnfermedad());
         
-        // Gestión de países
-        document.getElementById('btnAgregarPais').addEventListener('click', () => this.agregarPais());
-        document.getElementById('btnEliminarPais').addEventListener('click', () => this.eliminarPaisSeleccionado());
-        
-        // Controles de matriz
         document.getElementById('btnToggleMatriz').addEventListener('click', () => this.toggleMatriz());
         document.getElementById('btnEditarMatriz').addEventListener('click', () => this.activarEdicionMatriz());
         
-        // Análisis y predicciones
         document.getElementById('btnPredecir30').addEventListener('click', () => this.predecir30Dias());
-        document.getElementById('btnPaisesRiesgo').addEventListener('click', () => this.identificarPaisesRiesgo());
+        document.getElementById('btnRegionesRiesgo').addEventListener('click', () => this.identificarRegionesRiesgo());
         document.getElementById('btnRutasCriticas').addEventListener('click', () => this.identificarRutasCriticas());
         document.getElementById('btnFiltrarAereo').addEventListener('click', () => this.filtrarRutasAereas());
         
-        // Canvas (clic en países)
-        const canvas = document.getElementById('mapaCanvas');
-        canvas.addEventListener('click', (e) => this.handleClicMapa(e));
-        
-        // Modal
         document.querySelector('.close-modal').addEventListener('click', () => this.cerrarModal());
         window.addEventListener('click', (e) => {
-            if (e.target.id === 'modalPais') {
-                this.cerrarModal();
-            }
+            if (e.target.id === 'modalRegion') this.cerrarModal();
         });
+        
+        const selectorMapa = document.getElementById('selectorMapa');
+        if (selectorMapa) {
+            selectorMapa.addEventListener('change', (e) => {
+                this.cambiarMapa(e.target.value);
+            });
+        }
+        
+        this.inicializarEventosTipoRuta();
+        this.actualizarUI();
     }
 
     inicializarEventosTipoRuta() {
-        // Eventos para las opciones de tipo de ruta
         document.querySelectorAll('.tipo-ruta-opcion').forEach(opcion => {
             opcion.addEventListener('click', () => {
-                // Deseleccionar todas
                 document.querySelectorAll('.tipo-ruta-opcion').forEach(o => {
                     o.classList.remove('seleccionada');
                 });
-                
-                // Seleccionar esta
                 opcion.classList.add('seleccionada');
                 this.tipoRutaSeleccionado = opcion.dataset.tipo;
                 
-                // Actualizar botón de eliminar si hay ruta existente
                 const btnEliminar = document.getElementById('btnEliminarRuta');
                 if (this.rutaEditando && this.rutaEditando.tipoActual) {
                     btnEliminar.style.display = 'inline-block';
@@ -842,19 +1443,43 @@ class ControladorAplicacion {
             });
         });
         
-        // Evento para el botón eliminar ruta
         document.getElementById('btnEliminarRuta').addEventListener('click', () => {
-            if (this.rutaEditando) {
-                this.eliminarRutaDesdeModal();
-            }
+            if (this.rutaEditando) this.eliminarRutaDesdeModal();
         });
     }
 
-    // ========== MÉTODOS DE SIMULACIÓN ==========
+    cambiarMapa(tipoMapa) {
+        this.detenerSimulacion();
+        
+        this.mundo = new Mundo(tipoMapa);
+        this.simulacion = new Simulacion(this.mundo, this.enfermedad);
+        
+        this.actualizarSelectorOrigen();
+        this.actualizarListaRegiones();
+        this.generarMatrizVisual();
+        this.actualizarCapaBase();
+        this.dibujarMapaPrincipal();
+        this.dibujarMapaAnalisis();
+        this.actualizarUI();
+        
+        const mapaNombre = tipoMapa === 'mundo' ? 'Mapa Mundial' : 
+                         tipoMapa === 'america_latina' ? 'América Latina' : 
+                         'Colombia (Departamentos)';
+        document.getElementById('mapaActual').textContent = `Mapa: ${mapaNombre}`;
+        this.mostrarMensaje(`Mapa cambiado a: ${mapaNombre}`);
+    }
+
+    detenerSimulacion() {
+        clearInterval(this.intervaloSimulacion);
+        if (this.simulacion) {
+            this.simulacion.configuracion.pausada = true;
+        }
+        document.getElementById('btnPlayPause').innerHTML = '<i class="fas fa-play"></i> Iniciar';
+        document.getElementById('estadoSimulacion').textContent = 'Estado: Detenido';
+    }
 
     toggleSimulacion() {
         const btn = document.getElementById('btnPlayPause');
-        const icon = btn.querySelector('i');
         
         this.simulacion.configuracion.pausada = !this.simulacion.configuracion.pausada;
         
@@ -872,7 +1497,7 @@ class ControladorAplicacion {
 
     iniciarSimulacion() {
         const velocidad = this.simulacion.configuracion.velocidad;
-        const intervalo = 1000 / velocidad; // ms entre pasos
+        const intervalo = 1000 / velocidad;
         
         clearInterval(this.intervaloSimulacion);
         this.intervaloSimulacion = setInterval(() => {
@@ -889,49 +1514,16 @@ class ControladorAplicacion {
     reiniciarSimulacion() {
         clearInterval(this.intervaloSimulacion);
         
-        // Crear nueva enfermedad
         this.enfermedad = new Enfermedad(
             document.getElementById('nombreEnfermedad').value,
             parseFloat(document.getElementById('tasaContagio').value),
             parseFloat(document.getElementById('tasaMortalidad').value),
             parseInt(document.getElementById('tiempoRecuperacion').value),
-            parseInt(document.getElementById('paisOrigen').value)
+            parseInt(document.getElementById('regionOrigen').value)
         );
         
-        // RESETEAR COMPLETAMENTE LOS PAÍSES
-        this.mundo.paises.forEach(pais => {
-            const poblacionTotal = pais.estadoPoblacion.total;
-            
-            // Reiniciar completamente el estado del país
-            pais.estadoPoblacion = {
-                total: poblacionTotal,
-                susceptible: poblacionTotal,
-                infectada: 0,
-                recuperada: 0,
-                fallecida: 0
-            };
-            pais.medidasVigentes = [];
-            pais.estadoInfeccioso = 'LIBRE';
-            pais.factorTransmision = 1.0;
-        });
-        
-        // Establecer país origen como infectado SOLO si está seleccionado
-        if (this.enfermedad.paisOrigen !== null && !isNaN(this.enfermedad.paisOrigen)) {
-            const paisOrigen = this.mundo.obtenerPaisPorId(this.enfermedad.paisOrigen);
-            if (paisOrigen) {
-                const infectadosIniciales = Math.max(1000, paisOrigen.estadoPoblacion.total * 0.0001);
-                paisOrigen.actualizarEstado({
-                    susceptible: paisOrigen.estadoPoblacion.susceptible - infectadosIniciales,
-                    infectada: infectadosIniciales
-                });
-                paisOrigen.estadoInfeccioso = 'INFECTADO';
-            }
-        }
-        
-        // Crear nueva simulación
         this.simulacion = new Simulacion(this.mundo, this.enfermedad);
         
-        // Actualizar UI
         document.getElementById('btnPlayPause').innerHTML = '<i class="fas fa-play"></i> Iniciar';
         document.getElementById('estadoSimulacion').textContent = 'Estado: Reiniciado';
         document.getElementById('fechaActual').textContent = 'Día: 0';
@@ -941,233 +1533,332 @@ class ControladorAplicacion {
 
     ajustarVelocidad(valor) {
         this.simulacion.configuracion.velocidad = valor;
-        
-        if (!this.simulacion.configuracion.pausada) {
-            this.iniciarSimulacion();
-        }
+        if (!this.simulacion.configuracion.pausada) this.iniciarSimulacion();
     }
 
-    // ========== MÉTODOS DE CONFIGURACIÓN ==========
-
     aplicarConfiguracionEnfermedad() {
-        // Obtener vías seleccionadas
         const viasSeleccionadas = [];
         document.querySelectorAll('input[name="via"]:checked').forEach(checkbox => {
             viasSeleccionadas.push(checkbox.value);
         });
         
-        // Actualizar enfermedad
         this.enfermedad.nombre = document.getElementById('nombreEnfermedad').value;
         this.enfermedad.tasaContagio = parseFloat(document.getElementById('tasaContagio').value) / 100;
         this.enfermedad.tasaMortalidad = parseFloat(document.getElementById('tasaMortalidad').value) / 100;
         this.enfermedad.tiempoRecuperacion = parseInt(document.getElementById('tiempoRecuperacion').value);
-        this.enfermedad.paisOrigen = parseInt(document.getElementById('paisOrigen').value);
+        this.enfermedad.regionOrigen = parseInt(document.getElementById('regionOrigen').value);
         this.enfermedad.viaPrevaleciente = viasSeleccionadas;
         
-        // Reiniciar simulación con nueva enfermedad
         this.simulacion = new Simulacion(this.mundo, this.enfermedad);
-        
         this.actualizarUI();
-        this.mostrarMensaje('Configuración de enfermedad aplicada correctamente');
+        this.mostrarMensaje('✅ Configuración de enfermedad aplicada');
     }
-
-    agregarPais() {
-        const nombre = document.getElementById('nombrePais').value.trim();
-        const poblacion = parseFloat(document.getElementById('poblacionPais').value);
-        
-        if (!nombre || isNaN(poblacion) || poblacion <= 0) {
-            this.mostrarMensaje('Error: Nombre y población son requeridos', true);
-            return;
-        }
-        
-        // Coordenadas aleatorias (en una región específica)
-        const latitud = (Math.random() * 60) - 30; // Entre -30 y 30
-        const longitud = (Math.random() * 120) - 80; // Entre -80 y 40
-        
-        this.mundo.agregarPais(nombre, poblacion, latitud, longitud);
-        
-        // Actualizar UI
-        this.actualizarListaPaises();
-        this.actualizarSelectorOrigen();
-        this.generarMatrizVisual();
-        this.dibujarMapa();
-        
-        // Limpiar campos
-        document.getElementById('nombrePais').value = '';
-        document.getElementById('poblacionPais').value = '50';
-        
-        this.mostrarMensaje(`País "${nombre}" agregado correctamente`);
-    }
-
-    eliminarPaisSeleccionado() {
-        if (this.paisSeleccionado === null) {
-            this.mostrarMensaje('Selecciona un país primero', true);
-            return;
-        }
-        
-        const nombre = this.mundo.obtenerPaisPorId(this.paisSeleccionado).nombre;
-        const confirmado = confirm(`¿Eliminar el país "${nombre}" y todas sus rutas?`);
-        
-        if (confirmado) {
-            this.mundo.eliminarPais(this.paisSeleccionado);
-            this.paisSeleccionado = null;
-            
-            this.actualizarListaPaises();
-            this.actualizarSelectorOrigen();
-            this.generarMatrizVisual();
-            this.dibujarMapa();
-            
-            this.mostrarMensaje(`País "${nombre}" eliminado correctamente`);
-        }
-    }
-
-    // ========== MÉTODOS DE VISUALIZACIÓN ==========
 
     actualizarUI() {
-        // Actualizar fecha
         document.getElementById('fechaActual').textContent = `Día: ${this.simulacion.fechaActual}`;
         
-        // Actualizar estadísticas
         const stats = this.simulacion.obtenerEstadisticasGlobales();
         document.getElementById('totalInfectados').textContent = stats.totalInfectados.toLocaleString();
         document.getElementById('totalFallecidos').textContent = stats.totalFallecidos.toLocaleString();
-        document.getElementById('paisesAfectados').textContent = stats.paisesAfectados;
-        document.getElementById('tasaPropagacion').textContent = 
-            `${(stats.tasaPropagacion * 100).toFixed(2)}%`;
+        document.getElementById('regionesAfectadas').textContent = stats.regionesAfectadas;
+        document.getElementById('reinfecciones').textContent = stats.totalReinfectados.toLocaleString();
         
-        // Actualizar contadores
-        document.getElementById('contadorPaises').textContent = `Países: ${this.mundo.paises.length}`;
-        document.getElementById('contadorRutas').textContent = `Rutas: ${this.mundo.rutas.length}`;
+        const tasaElement = document.getElementById('tasaPropagacion');
+        const tasaValor = stats.tasaPropagacion * 100;
         
-        // Redibujar mapa
-        this.dibujarMapa();
+        if (tasaValor < 0) {
+            tasaElement.textContent = `Tasa de Curación: ${Math.abs(tasaValor).toFixed(2)}%`;
+            tasaElement.style.color = '#27ae60';
+        } else {
+            tasaElement.textContent = `Tasa de Propagación: ${tasaValor.toFixed(2)}%`;
+            tasaElement.style.color = '#e74c3c';
+        }
         
-        // Actualizar lista de países
-        this.actualizarListaPaises();
+        document.getElementById('contadorRegiones').textContent = `Regiones: ${this.mundo.regiones.length}`;
+        const statsRutas = this.mundo.obtenerEstadisticasRutas();
+        document.getElementById('contadorRutas').textContent = `Rutas: ${statsRutas.totalRutas} (${statsRutas.rutasCortadas} cortadas)`;
+        
+        this.dibujarMapaPrincipal();
+        this.actualizarListaRegiones();
+        
+        const prediccion = this.simulacion.predecirProximoDia();
+        document.getElementById('estadoSimulacion').textContent = 
+            `Estado: ${this.simulacion.configuracion.pausada ? 'Pausado' : 'Ejecutando'} | Riesgo: ${prediccion.riesgoExpansion}`;
     }
 
-    actualizarListaPaises() {
-        const lista = document.getElementById('listaPaises');
+    actualizarListaRegiones() {
+        const lista = document.getElementById('listaRegiones');
+        if (!lista) return;
+        
         lista.innerHTML = '';
         
-        this.mundo.paises.forEach(pais => {
+        this.mundo.regiones.forEach(region => {
             const item = document.createElement('div');
-            item.className = `pais-item ${this.paisSeleccionado === pais.id ? 'seleccionado' : ''}`;
-            item.dataset.id = pais.id;
+            item.className = `region-item ${this.regionSeleccionada === region.id ? 'seleccionado' : ''}`;
+            item.dataset.id = region.id;
+            
+            const tieneReinfecciones = region.estadoPoblacion.reinfectados > 0;
+            const porcentajeInfectado = (region.estadoPoblacion.infectada / region.estadoPoblacion.total * 100).toFixed(1);
+            
+            const iconoReinfeccion = tieneReinfecciones ? 
+                '<span class="reinfeccion-indicator" title="Tiene reinfecciones">🔄</span>' : '';
+            const iconoCuarentena = region.enCuarentena ? 
+                '<span class="cuarentena-indicator" title="En cuarentena">🔒</span>' : '';
             
             item.innerHTML = `
-                <div class="pais-info">
-                    <div class="estado-pais" style="background-color: ${pais.getColorEstado()}"></div>
-                    <span>${pais.nombre}</span>
+                <div class="region-info">
+                    <div class="estado-region" style="background-color: ${region.getColorEstado()}"></div>
+                    <span>${region.nombre}</span>
+                    ${iconoCuarentena}
+                    ${iconoReinfeccion}
                 </div>
-                <div class="pais-estadisticas">
-                    <small>${pais.estadoPoblacion.infectada.toLocaleString()} infectados</small>
+                <div class="region-estadisticas">
+                    <small>${porcentajeInfectado}% infectados</small>
+                    ${tieneReinfecciones ? 
+                        `<small class="reinfeccion-count">${region.estadoPoblacion.reinfectados.toLocaleString()} reinf</small>` : ''}
                 </div>
             `;
             
-            item.addEventListener('click', () => {
-                this.seleccionarPais(pais.id);
+            item.addEventListener('click', () => this.seleccionarRegion(region.id));
+            item.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                this.mostrarMenuContextualLista(e, region);
             });
             
             lista.appendChild(item);
         });
     }
 
+    mostrarMenuContextualLista(e, region) {
+        const menu = document.createElement('div');
+        menu.className = 'context-menu-flotante';
+        menu.style.position = 'fixed';
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+        menu.style.zIndex = '1000';
+        menu.style.background = 'white';
+        menu.style.border = '1px solid #ccc';
+        menu.style.borderRadius = '5px';
+        menu.style.padding = '10px';
+        menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+        
+        menu.innerHTML = `
+            <h4>${region.nombre}</h4>
+            <button onclick="controlador.aplicarMedidaRegion(${region.id}, 'cuarentena'); this.parentElement.remove()" 
+                    class="context-btn ${region.enCuarentena ? 'active' : ''}">
+                ${region.enCuarentena ? '🔓 Quitar Cuarentena' : '🔒 Poner en Cuarentena'}
+            </button>
+            <button onclick="controlador.aplicarMedidaRegion(${region.id}, 'cierre_fronteras'); this.parentElement.remove()" 
+                    class="context-btn">
+                ${region.medidasVigentes.includes('cierre_fronteras') ? '🌍 Reabrir Fronteras' : '🚫 Cerrar Fronteras'}
+            </button>
+            <button onclick="controlador.forzarReinfeccion(${region.id}); this.parentElement.remove()" 
+                    class="context-btn reinfeccion-btn">
+                🔄 Forzar Reinfección
+            </button>
+        `;
+        
+        document.body.appendChild(menu);
+        
+        const cerrarMenu = () => {
+            if (menu && menu.parentNode) {
+                menu.parentNode.removeChild(menu);
+            }
+        };
+        
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        document.addEventListener('click', cerrarMenu);
+        document.addEventListener('contextmenu', cerrarMenu);
+        
+        setTimeout(cerrarMenu, 10000);
+    }
+
     actualizarSelectorOrigen() {
-        const select = document.getElementById('paisOrigen');
-        const valorActual = select.value;
+        const select = document.getElementById('regionOrigen');
+        if (!select) return;
         
         select.innerHTML = '<option value="null">Seleccionar...</option>';
-        this.mundo.paises.forEach(pais => {
+        
+        this.mundo.regiones.forEach(region => {
             const option = document.createElement('option');
-            option.value = pais.id;
-            option.textContent = pais.nombre;
-            if (parseInt(valorActual) === pais.id) {
-                option.selected = true;
-            }
+            option.value = region.id;
+            option.textContent = region.nombre;
             select.appendChild(option);
         });
     }
 
-    seleccionarPais(id) {
-        this.paisSeleccionado = id;
-        this.actualizarListaPaises();
+    seleccionarRegion(id) {
+        this.regionSeleccionada = id;
+        this.actualizarListaRegiones();
         
-        // MOSTRAR INFORMACIÓN DETALLADA DEL PAÍS
-        const pais = this.mundo.obtenerPaisPorId(id);
-        if (pais) {
-            this.mostrarInformacionPais(pais);
+        const region = this.mundo.obtenerRegionPorId(id);
+        if (region) {
+            this.mostrarInformacionRegion(region);
+            
+            if (this.marcadoresRegiones[id]) {
+                const marker = this.marcadoresRegiones[id];
+                const latlng = marker.getLatLng();
+                this.mapaPrincipal.setView(latlng, Math.max(this.mapaPrincipal.getZoom(), 6));
+            }
         }
     }
 
-    mostrarInformacionPais(pais) {
-        const porcentajeInfectado = (pais.estadoPoblacion.infectada / pais.estadoPoblacion.total) * 100;
-        const porcentajeRecuperado = (pais.estadoPoblacion.recuperada / pais.estadoPoblacion.total) * 100;
-        const porcentajeFallecido = (pais.estadoPoblacion.fallecida / pais.estadoPoblacion.total) * 100;
-        const porcentajeSusceptible = (pais.estadoPoblacion.susceptible / pais.estadoPoblacion.total) * 100;
+    mostrarInformacionRegion(region) {
+        const porcentajeInfectado = (region.estadoPoblacion.infectada / region.estadoPoblacion.total) * 100;
+        const porcentajeRecuperado = (region.estadoPoblacion.recuperada / region.estadoPoblacion.total) * 100;
+        const porcentajeFallecido = (region.estadoPoblacion.fallecida / region.estadoPoblacion.total) * 100;
+        const porcentajeSusceptible = (region.estadoPoblacion.susceptible / region.estadoPoblacion.total) * 100;
+        const porcentajeReinfectado = (region.estadoPoblacion.reinfectados / region.estadoPoblacion.total) * 100;
         
-        document.getElementById('modalPaisTitulo').textContent = `Información: ${pais.nombre}`;
-        document.getElementById('modalPaisContenido').innerHTML = `
+        const rutasConectadas = this.mundo.obtenerRutasActivasConectadas(region.id);
+        const rutasCortadas = this.mundo.obtenerRutasConectadas(region.id).filter(r => r.cortada);
+        
+        document.getElementById('modalRegionTitulo').textContent = `📊 ${region.nombre}`;
+        document.getElementById('modalRegionContenido').innerHTML = `
             <div class="modal-stats">
                 <div class="modal-stat">
-                    <span class="modal-label">Población Total:</span>
-                    <span class="modal-value">${Math.round(pais.estadoPoblacion.total / 1000000 * 100) / 100} millones</span>
+                    <span class="modal-label">👥 Población Total:</span>
+                    <span class="modal-value">${Math.round(region.estadoPoblacion.total / 1000000 * 100) / 100} millones</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Susceptibles:</span>
-                    <span class="modal-value" style="color: #4CAF50">${pais.estadoPoblacion.susceptible.toLocaleString()} (${porcentajeSusceptible.toFixed(2)}%)</span>
+                    <span class="modal-label">🟢 Susceptibles:</span>
+                    <span class="modal-value" style="color: #4CAF50">${region.estadoPoblacion.susceptible.toLocaleString()} (${porcentajeSusceptible.toFixed(2)}%)</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Infectados:</span>
-                    <span class="modal-value" style="color: #F44336">${pais.estadoPoblacion.infectada.toLocaleString()} (${porcentajeInfectado.toFixed(2)}%)</span>
+                    <span class="modal-label">🔴 Infectados:</span>
+                    <span class="modal-value" style="color: #F44336">${region.estadoPoblacion.infectada.toLocaleString()} (${porcentajeInfectado.toFixed(2)}%)</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Recuperados:</span>
-                    <span class="modal-value" style="color: #2196F3">${pais.estadoPoblacion.recuperada.toLocaleString()} (${porcentajeRecuperado.toFixed(2)}%)</span>
+                    <span class="modal-label">🔵 Recuperados:</span>
+                    <span class="modal-value" style="color: #2196F3">${region.estadoPoblacion.recuperada.toLocaleString()} (${porcentajeRecuperado.toFixed(2)}%)</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Fallecidos:</span>
-                    <span class="modal-value">${pais.estadoPoblacion.fallecida.toLocaleString()} (${porcentajeFallecido.toFixed(2)}%)</span>
+                    <span class="modal-label">⚫ Fallecidos:</span>
+                    <span class="modal-value">${region.estadoPoblacion.fallecida.toLocaleString()} (${porcentajeFallecido.toFixed(2)}%)</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Estado:</span>
-                    <span class="modal-value" style="color: ${pais.getColorEstado()}">${pais.estadoInfeccioso}</span>
+                    <span class="modal-label">🔄 Reinfecciones:</span>
+                    <span class="modal-value" style="color: #9C27B0">${region.estadoPoblacion.reinfectados.toLocaleString()} (${porcentajeReinfectado.toFixed(2)}%)</span>
                 </div>
                 <div class="modal-stat">
-                    <span class="modal-label">Factor Transmisión:</span>
-                    <span class="modal-value">${pais.factorTransmision.toFixed(3)}</span>
+                    <span class="modal-label">${region.getIconoEstado()} Estado:</span>
+                    <span class="modal-value" style="color: ${region.getColorEstado()}">${region.estadoInfeccioso}</span>
+                </div>
+                <div class="modal-stat">
+                    <span class="modal-label">📊 Factor Transmisión:</span>
+                    <span class="modal-value">${region.factorTransmision.toFixed(3)}</span>
+                </div>
+                <div class="modal-stat">
+                    <span class="modal-label">${region.enCuarentena ? '🔒' : '🔓'} En Cuarentena:</span>
+                    <span class="modal-value" style="color: ${region.enCuarentena ? '#673AB7' : '#4CAF50'}">${region.enCuarentena ? 'SÍ' : 'NO'}</span>
                 </div>
             </div>
             
             <div class="modal-section">
-                <h4>Medidas Vigentes:</h4>
-                ${pais.medidasVigentes.length > 0 ? 
-                    `<ul>${pais.medidasVigentes.map(m => `<li>${this.formatearMedida(m)}</li>`).join('')}</ul>` : 
+                <h4>🛡️ Medidas Vigentes:</h4>
+                ${region.medidasVigentes.length > 0 ? 
+                    `<ul>${region.medidasVigentes.map(m => `<li>${this.formatearMedida(m)}</li>`).join('')}</ul>` : 
                     '<p>No hay medidas activas</p>'}
             </div>
             
             <div class="modal-section">
-                <h4>Conexiones con otros países:</h4>
-                ${this.mundo.obtenerRutasConectadas(pais.id).length > 0 ? 
-                    `<ul>${this.mundo.obtenerRutasConectadas(pais.id).map(r => {
-                        const otroPais = this.mundo.obtenerPaisPorId(r.paisConectadoId || 
-                            (r.idOrigen === pais.id ? r.idDestino : r.idOrigen));
+                <h4>🛣️ Conexiones Activas (${rutasConectadas.length}):</h4>
+                ${rutasConectadas.length > 0 ? 
+                    `<ul>${rutasConectadas.map(r => {
+                        const otraRegion = this.mundo.obtenerRegionPorId(r.regionConectadaId);
                         const direccion = r.direccion === 'salida' ? '→' : '←';
                         const prob = (r.calcularProbabilidadBase() * 100).toFixed(1);
-                        return `<li>${direccion} ${otroPais.nombre} (${r.tipo}, Prob: ${prob}%)</li>`;
+                        const probReinfeccion = (r.calcularProbabilidadBase() * 100 * 0.3).toFixed(1);
+                        return `<li>${direccion} ${otraRegion.nombre} (${r.getIconoTipo()} ${r.tipo}, Prob: ${prob}%, Reinfección: ${probReinfeccion}%)</li>`;
                     }).join('')}</ul>` : 
                     '<p>No tiene conexiones activas</p>'}
             </div>
             
+            ${rutasCortadas.length > 0 ? `
+            <div class="modal-section">
+                <h4>🔒 Conexiones Cortadas (${rutasCortadas.length}):</h4>
+                <ul>${rutasCortadas.map(r => {
+                    const otraRegion = this.mundo.obtenerRegionPorId(r.regionConectadaId);
+                    const direccion = r.direccion === 'salida' ? '→' : '←';
+                    return `<li style="color: #999; text-decoration: line-through;">${direccion} ${otraRegion.nombre} (${r.getIconoTipo()} ${r.tipo})</li>`;
+                }).join('')}</ul>
+            </div>` : ''}
+            
             <div class="modal-actions">
-                <button class="btn-small" onclick="controlador.aplicarMedidaPais(${pais.id}, 'cuarentena')">Aplicar Cuarentena</button>
-                <button class="btn-small" onclick="controlador.aplicarMedidaPais(${pais.id}, 'cierre_fronteras')">Cerrar Fronteras</button>
-                <button class="btn-small" onclick="controlador.aplicarMedidaPais(${pais.id}, 'distanciamiento')">Distanciamiento</button>
-                <button class="btn-small" onclick="controlador.aplicarMedidaPais(${pais.id}, 'mascarillas')">Uso de Mascarillas</button>
+                <button class="btn-small" onclick="controlador.aplicarMedidaRegion(${region.id}, 'cuarentena')">
+                    ${region.enCuarentena ? '🔓 Quitar Cuarentena' : '🔒 Poner en Cuarentena'}
+                </button>
+                <button class="btn-small" onclick="controlador.aplicarMedidaRegion(${region.id}, 'cierre_fronteras')">
+                    ${region.medidasVigentes.includes('cierre_fronteras') ? '🌍 Reabrir Fronteras' : '🚫 Cerrar Fronteras'}
+                </button>
+                <button class="btn-small" onclick="controlador.aplicarMedidaRegion(${region.id}, 'distanciamiento')">
+                    ${region.medidasVigentes.includes('distanciamiento') ? '👥 Suspender Distanciamiento' : '↔️ Aplicar Distanciamiento'}
+                </button>
+                <button class="btn-small" onclick="controlador.aplicarMedidaRegion(${region.id}, 'mascarillas')">
+                    ${region.medidasVigentes.includes('mascarillas') ? '😷 Suspender Mascarillas' : '😷 Aplicar Mascarillas'}
+                </button>
+                <button class="btn-small" onclick="controlador.aplicarMedidaRegion(${region.id}, 'vacunacion')">
+                    ${region.medidasVigentes.includes('vacunacion') ? '💉 Suspender Vacunación' : '💉 Aplicar Vacunación'}
+                </button>
+                <button class="btn-small" onclick="controlador.forzarReinfeccion(${region.id})" 
+                        style="background-color: #9C27B0; color: white">
+                    🔄 Forzar Reinfección (Test)
+                </button>
             </div>
         `;
         
-        document.getElementById('modalPais').style.display = 'flex';
+        document.getElementById('modalRegion').style.display = 'flex';
+    }
+
+    aplicarMedidaRegion(id, medida) {
+        const region = this.mundo.obtenerRegionPorId(id);
+        if (!region) return;
+        
+        if (medida === 'cuarentena') {
+            const nuevaCuarentena = !region.enCuarentena;
+            region.toggleCuarentena(nuevaCuarentena);
+            
+            if (nuevaCuarentena) {
+                this.mundo.cortarRutasRegion(id);
+                this.mostrarMensaje(`✅ ${region.nombre} puesta en cuarentena. Todas sus rutas han sido cortadas.`);
+            } else {
+                this.mundo.restaurarRutasRegion(id);
+                this.mostrarMensaje(`✅ Cuarentena removida de ${region.nombre}. Rutas restauradas.`);
+            }
+        } else {
+            if (region.medidasVigentes.includes(medida)) {
+                region.removerMedida(medida);
+                this.mostrarMensaje(`✅ Medida "${this.formatearMedida(medida)}" removida de ${region.nombre}`);
+            } else {
+                region.aplicarMedida(medida);
+                this.mostrarMensaje(`✅ Medida "${this.formatearMedida(medida)}" aplicada en ${region.nombre}`);
+            }
+        }
+        
+        if (this.regionSeleccionada === id) {
+            this.mostrarInformacionRegion(region);
+        }
+        
+        this.actualizarUI();
+    }
+
+    forzarReinfeccion(regionId) {
+        const region = this.mundo.obtenerRegionPorId(regionId);
+        if (region && region.estadoPoblacion.recuperada > 0 && !region.enCuarentena) {
+            const cantidad = Math.max(1, Math.floor(region.estadoPoblacion.recuperada * 0.01));
+            region.agregarInfeccion(cantidad, this.simulacion.fechaActual, true);
+            
+            if (this.regionSeleccionada === regionId) {
+                this.mostrarInformacionRegion(region);
+            }
+            
+            this.mostrarMensaje(`🔄 ${cantidad.toLocaleString()} reinfecciones forzadas en ${region.nombre}`);
+            this.actualizarUI();
+        } else if (region.enCuarentena) {
+            this.mostrarMensaje('❌ No se pueden forzar reinfecciones en regiones en cuarentena', true);
+        } else {
+            this.mostrarMensaje('❌ No hay recuperados para reinfectar', true);
+        }
     }
 
     formatearMedida(medida) {
@@ -1175,188 +1866,20 @@ class ControladorAplicacion {
             'cuarentena': 'Cuarentena Total',
             'cierre_fronteras': 'Cierre de Fronteras',
             'distanciamiento': 'Distanciamiento Social',
-            'mascarillas': 'Uso Obligatorio de Mascarillas'
+            'mascarillas': 'Uso de Mascarillas',
+            'vacunacion': 'Campaña de Vacunación'
         };
         return nombres[medida] || medida;
     }
 
-    aplicarMedidaPais(id, medida) {
-        const pais = this.mundo.obtenerPaisPorId(id);
-        if (pais) {
-            if (pais.medidasVigentes.includes(medida)) {
-                pais.removerMedida(medida);
-                this.mostrarMensaje(`Medida "${medida}" removida de ${pais.nombre}`);
-            } else {
-                pais.aplicarMedida(medida);
-                this.mostrarMensaje(`Medida "${medida}" aplicada en ${pais.nombre}`);
-            }
-            this.actualizarUI();
-        }
-    }
-
     cerrarModal() {
-        document.getElementById('modalPais').style.display = 'none';
+        document.getElementById('modalRegion').style.display = 'none';
     }
-
-    // ========== MÉTODOS DEL MAPA ==========
-
-    dibujarMapa(canvasId = 'mapaCanvas', soloAereas = false) {
-        const canvas = document.getElementById(canvasId);
-        const ctx = canvas.getContext('2d');
-        
-        // Limpiar canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Escalar coordenadas al tamaño del canvas CON MÁRGENES
-        const minLat = Math.min(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const maxLat = Math.max(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const minLng = Math.min(...this.mundo.paises.map(p => p.coordenadas.longitud));
-        const maxLng = Math.max(...this.mundo.paises.map(p => p.coordenadas.longitud));
-        
-        // Agregar margen del 15% alrededor de los puntos
-        const margen = 0.15;
-        const rangoLat = maxLat - minLat;
-        const rangoLng = maxLng - minLng;
-        
-        const minLatConMargen = minLat - (rangoLat * margen);
-        const maxLatConMargen = maxLat + (rangoLat * margen);
-        const minLngConMargen = minLng - (rangoLng * margen);
-        const maxLngConMargen = maxLng + (rangoLng * margen);
-        
-        const escalaX = canvas.width / (maxLngConMargen - minLngConMargen);
-        const escalaY = canvas.height / (maxLatConMargen - minLatConMargen);
-        
-        // Dibujar rutas primero
-        ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
-        ctx.lineWidth = 1;
-        
-        const rutasADibujar = soloAereas ? 
-            this.mundo.rutas.filter(r => r.tipo === 'AEREO' && r.activa) : 
-            this.mundo.rutas;
-        
-        rutasADibujar.forEach(ruta => {
-            const origen = this.mundo.obtenerPaisPorId(ruta.idOrigen);
-            const destino = this.mundo.obtenerPaisPorId(ruta.idDestino);
-            
-            if (origen && destino && ruta.activa) {
-                const x1 = (origen.coordenadas.longitud - minLngConMargen) * escalaX;
-                const y1 = canvas.height - ((origen.coordenadas.latitud - minLatConMargen) * escalaY);
-                const x2 = (destino.coordenadas.longitud - minLngConMargen) * escalaX;
-                const y2 = canvas.height - ((destino.coordenadas.latitud - minLatConMargen) * escalaY);
-                
-                // Usar el color del tipo de ruta
-                ctx.strokeStyle = ruta.getColor();
-                ctx.lineWidth = soloAereas ? 3 : 2;
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-                
-                // Añadir etiqueta del tipo en rutas importantes
-                if (!soloAereas && ruta.distancia > 3000) {
-                    const mitadX = (x1 + x2) / 2;
-                    const mitadY = (y1 + y2) / 2;
-                    
-                    ctx.fillStyle = ruta.getColor();
-                    ctx.font = 'bold 10px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(ruta.tipo.charAt(0), mitadX, mitadY - 5);
-                }
-            }
-        });
-        
-        // Dibujar países
-        this.mundo.paises.forEach(pais => {
-            const x = (pais.coordenadas.longitud - minLngConMargen) * escalaX;
-            const y = canvas.height - ((pais.coordenadas.latitud - minLatConMargen) * escalaY);
-            
-            // Tamaño basado en población (logarítmico) con mínimo
-            const radio = Math.max(8, 5 + Math.log10(pais.estadoPoblacion.total / 1000000) * 3);
-            
-            // Dibujar círculo
-            ctx.fillStyle = pais.getColorEstado();
-            ctx.beginPath();
-            ctx.arc(x, y, radio, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Borde si está seleccionado (solo en mapa principal)
-            if (canvasId === 'mapaCanvas' && this.paisSeleccionado === pais.id) {
-                ctx.strokeStyle = '#000000';
-                ctx.lineWidth = 3;
-                ctx.stroke();
-            }
-            
-            // Nombre del país
-            ctx.fillStyle = '#000000';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            // Solo mostrar nombre en mapa principal para no saturar
-            if (canvasId === 'mapaCanvas') {
-                ctx.fillText(pais.nombre, x, y - radio - 8);
-            }
-            
-            // Mostrar número de infectados si hay
-            if (pais.estadoPoblacion.infectada > 0 && canvasId === 'mapaCanvas') {
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = '10px Arial';
-                ctx.fillText(
-                    Math.round(pais.estadoPoblacion.infectada / 1000) + 'K', 
-                    x, 
-                    y + radio + 8
-                );
-            }
-        });
-    }
-
-    handleClicMapa(event) {
-        const canvas = document.getElementById('mapaCanvas');
-        const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        // Escalar coordenadas
-        const minLat = Math.min(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const maxLat = Math.max(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const minLng = Math.min(...this.mundo.paises.map(p => p.coordenadas.longitud));
-        const maxLng = Math.max(...this.mundo.paises.map(p => p.coordenadas.longitud));
-        
-        const escalaX = canvas.width / (maxLng - minLng);
-        const escalaY = canvas.height / (maxLat - minLat);
-        
-        // Convertir coordenadas de clic a coordenadas geográficas aproximadas
-        const lng = (x / escalaX) + minLng;
-        const lat = maxLat - (y / escalaY);
-        
-        // Encontrar país más cercano al clic
-        let paisCercano = null;
-        let distanciaMinima = Infinity;
-        
-        this.mundo.paises.forEach(pais => {
-            const distancia = Math.sqrt(
-                Math.pow(pais.coordenadas.longitud - lng, 2) + 
-                Math.pow(pais.coordenadas.latitud - lat, 2)
-            );
-            
-            if (distancia < distanciaMinima) {
-                distanciaMinima = distancia;
-                paisCercano = pais;
-            }
-        });
-        
-        if (paisCercano && distanciaMinima < 0.1) { // Umbral de cercanía
-            this.seleccionarPais(paisCercano.id);
-        }
-    }
-
-    // ========== MÉTODOS DE MATRIZ ==========
 
     generarMatrizVisual() {
         const matrizContainer = document.getElementById('matrizContainer');
-        
-        if (this.mundo.paises.length === 0) {
-            matrizContainer.innerHTML = '<div class="matriz-overlay"><p>Agrega países para ver la matriz</p></div>';
+        if (!matrizContainer || this.mundo.regiones.length === 0) {
+            matrizContainer.innerHTML = '<div class="matriz-overlay"><p>Selecciona un mapa para ver la matriz</p></div>';
             return;
         }
         
@@ -1369,21 +1892,53 @@ class ControladorAplicacion {
                 if (i === 0 && j === 0) {
                     html += `<th class="matriz-corner">${celda}</th>`;
                 } else if (i === 0) {
-                    const pais = this.mundo.paises[j-1];
-                    html += `<th class="matriz-encabezado" title="${pais.nombre} (${Math.round(pais.estadoPoblacion.total / 1000000)}M)">${celda}</th>`;
+                    const region = this.mundo.regiones[j-1];
+                    html += `<th class="matriz-encabezado" title="${region.nombre}">${celda}</th>`;
                 } else if (j === 0) {
-                    const pais = this.mundo.paises[i-1];
-                    html += `<th class="matriz-encabezado" title="${pais.nombre} (${Math.round(pais.estadoPoblacion.total / 1000000)}M)">${celda}</th>`;
+                    const region = this.mundo.regiones[i-1];
+                    html += `<th class="matriz-encabezado" title="${region.nombre}">${celda}</th>`;
                 } else {
-                    // Determinar si hay ruta
-                    const tieneRuta = this.mundo.matrizAdyacencia[i-1][j-1] === 1;
-                    const claseBase = tieneRuta ? 'matriz-celda-activa' : 'matriz-celda-inactiva';
-                    const valor = tieneRuta ? '1' : '0';
+                    const clave = `${Math.min(i-1, j-1)}-${Math.max(i-1, j-1)}`;
+                    const ruta = this.mundo.tablaRutas.get(clave);
+                    
+                    let claseBase, valor, titulo = '';
+                    
+                    if (ruta) {
+                        if (ruta.cortada) {
+                            claseBase = 'matriz-celda-inactiva celda-cortada';
+                            valor = 'X';
+                            titulo = `RUTA CORTADA\n${this.mundo.regiones[i-1].nombre} ↔ ${this.mundo.regiones[j-1].nombre}`;
+                        } else {
+                            claseBase = 'matriz-celda-activa';
+                            valor = '1';
+                            
+                            const regionOrigen = this.mundo.regiones[i-1];
+                            const regionDestino = this.mundo.regiones[j-1];
+                            const probabilidad = (ruta.calcularProbabilidadBase() * 100).toFixed(1);
+                            const probabilidadReinfeccion = (ruta.calcularProbabilidadBase() * 100 * 0.3).toFixed(1);
+                            
+                            titulo = `${regionOrigen.nombre} ↔ ${regionDestino.nombre}\n` +
+                                    `Tipo: ${ruta.tipo}\n` +
+                                    `Distancia: ${Math.round(ruta.distancia)} km\n` +
+                                    `Prob. contagio: ${probabilidad}%\n` +
+                                    `Prob. reinfección: ${probabilidadReinfeccion}%`;
+                            
+                            switch(ruta.tipo) {
+                                case 'AEREO': claseBase += ' celda-aerea'; break;
+                                case 'TERRESTRE': claseBase += ' celda-terrestre'; break;
+                                case 'MARITIMO': claseBase += ' celda-maritima'; break;
+                            }
+                        }
+                    } else {
+                        claseBase = 'matriz-celda-inactiva';
+                        valor = '0';
+                    }
                     
                     html += `<td class="matriz-celda ${claseBase}" 
                             data-fila="${i-1}" 
                             data-columna="${j-1}"
-                            id="celda-${i-1}-${j-1}">${valor}</td>`;
+                            id="celda-${i-1}-${j-1}"
+                            title="${titulo}">${valor}</td>`;
                 }
             });
             html += '</tr>';
@@ -1392,83 +1947,7 @@ class ControladorAplicacion {
         html += '</table>';
         matrizContainer.innerHTML = html;
         
-        // Agregar tooltips con información del tipo de ruta
-        this.agregarTooltipsMatriz();
-        
-        // Agregar eventos
         this.agregarEventosMatriz();
-    }
-
-    agregarTooltipsMatriz() {
-        // Primero, limpiar todas las clases de tipo
-        document.querySelectorAll('.matriz-celda').forEach(celda => {
-            celda.classList.remove('celda-aerea', 'celda-terrestre', 'celda-maritima');
-            
-            // Restaurar color gris para celdas inactivas
-            if (celda.classList.contains('matriz-celda-inactiva')) {
-                celda.style.backgroundColor = 'rgba(240, 240, 240, 0.5)';
-                celda.style.color = '#888888';
-            }
-        });
-        
-        // Para cada ruta, asignar color según tipo
-        this.mundo.tablaRutas.forEach((ruta, clave) => {
-            const [idOrigen, idDestino] = clave.split('-').map(Number);
-            
-            // Encontrar la celda en el triángulo superior
-            const fila = Math.min(idOrigen, idDestino);
-            const columna = Math.max(idOrigen, idDestino);
-            
-            const celda = document.querySelector(
-                `.matriz-celda[data-fila="${fila}"][data-columna="${columna}"]`
-            );
-            
-            if (celda) {
-                const paisOrigen = this.mundo.obtenerPaisPorId(idOrigen);
-                const paisDestino = this.mundo.obtenerPaisPorId(idDestino);
-                
-                if (paisOrigen && paisDestino) {
-                    const probabilidad = (ruta.calcularProbabilidadBase() * 100).toFixed(1);
-                    const trafico = (ruta.trafico * 100).toFixed(0);
-                    
-                    // Tooltip informativo
-                    celda.title = `${paisOrigen.nombre} ↔ ${paisDestino.nombre}\n` +
-                                `Tipo: ${ruta.tipo}\n` +
-                                `Distancia: ${Math.round(ruta.distancia)} km\n` +
-                                `Tráfico: ${trafico}%\n` +
-                                `Prob. contagio: ${probabilidad}%`;
-                    
-                    // Asignar clase CSS según tipo de ruta
-                    switch(ruta.tipo) {
-                        case 'AEREO':
-                            celda.classList.add('celda-aerea');
-                            break;
-                        case 'TERRESTRE':
-                            celda.classList.add('celda-terrestre');
-                            break;
-                        case 'MARITIMO':
-                            celda.classList.add('celda-maritima');
-                            break;
-                    }
-                    
-                    // También establecer estilo directo como backup
-                    const coloresDirectos = {
-                        'AEREO': 'rgba(255, 100, 100, 0.7)',
-                        'TERRESTRE': 'rgba(100, 255, 100, 0.7)',
-                        'MARITIMO': 'rgba(100, 100, 255, 0.7)'
-                    };
-                    
-                    celda.style.backgroundColor = coloresDirectos[ruta.tipo] || 'rgba(200, 200, 200, 0.7)';
-                    celda.style.color = '#000000';
-                    celda.style.fontWeight = 'bold';
-                    
-                    // Cambiar a clase activa si no lo está
-                    celda.classList.remove('matriz-celda-inactiva');
-                    celda.classList.add('matriz-celda-activa');
-                    celda.textContent = '1';
-                }
-            }
-        });
     }
 
     agregarEventosMatriz() {
@@ -1477,9 +1956,7 @@ class ControladorAplicacion {
                 const fila = parseInt(celda.dataset.fila);
                 const columna = parseInt(celda.dataset.columna);
                 
-                if (fila === columna) return; // No rutas a sí mismo
-                
-                // Solo permitir modificar en el triángulo superior
+                if (fila === columna) return;
                 if (columna <= fila) {
                     this.mostrarMensaje('Modifica solo la diagonal superior (matriz simétrica)', true);
                     return;
@@ -1491,52 +1968,47 @@ class ControladorAplicacion {
     }
 
     manejarClicCeldaMatriz(fila, columna, celda) {
-        const paisOrigen = this.mundo.paises[fila];
-        const paisDestino = this.mundo.paises[columna];
+        const regionOrigen = this.mundo.regiones[fila];
+        const regionDestino = this.mundo.regiones[columna];
         
-        // Verificar si ya existe una ruta
         const clave = `${Math.min(fila, columna)}-${Math.max(fila, columna)}`;
         const rutaExistente = this.mundo.tablaRutas.get(clave);
         
-        // Guardar información de la ruta que estamos editando
         this.rutaEditando = {
-            fila,
-            columna,
-            paisOrigenId: paisOrigen.id,
-            paisDestinoId: paisDestino.id,
+            fila, columna,
+            regionOrigenId: regionOrigen.id,
+            regionDestinoId: regionDestino.id,
             tipoActual: rutaExistente ? rutaExistente.tipo : null,
             celda: celda
         };
         
-        // Mostrar modal para seleccionar tipo de ruta
-        this.mostrarModalTipoRuta(paisOrigen.nombre, paisDestino.nombre, rutaExistente);
+        this.mostrarModalTipoRuta(regionOrigen.nombre, regionDestino.nombre, rutaExistente);
     }
 
     mostrarModalTipoRuta(nombreOrigen, nombreDestino, rutaExistente) {
-        document.getElementById('rutaPaises').textContent = 
-            `${nombreOrigen} ↔ ${nombreDestino}`;
+        const rutaRegiones = document.getElementById('rutaRegiones');
+        if (rutaRegiones) rutaRegiones.textContent = `${nombreOrigen} ↔ ${nombreDestino}`;
         
-        // Mostrar u ocultar botón de eliminar
         const btnEliminar = document.getElementById('btnEliminarRuta');
-        if (rutaExistente) {
-            btnEliminar.style.display = 'inline-block';
-            btnEliminar.textContent = `Eliminar Ruta ${rutaExistente.tipo}`;
-            
-            // Preseleccionar el tipo actual
-            document.querySelectorAll('.tipo-ruta-opcion').forEach(opcion => {
-                opcion.classList.remove('seleccionada');
-                if (opcion.dataset.tipo === rutaExistente.tipo) {
-                    opcion.classList.add('seleccionada');
-                    this.tipoRutaSeleccionado = rutaExistente.tipo;
-                }
-            });
-        } else {
-            btnEliminar.style.display = 'none';
-            // Deseleccionar todos
-            document.querySelectorAll('.tipo-ruta-opcion').forEach(opcion => {
-                opcion.classList.remove('seleccionada');
-            });
-            this.tipoRutaSeleccionado = null;
+        if (btnEliminar) {
+            if (rutaExistente) {
+                btnEliminar.style.display = 'inline-block';
+                btnEliminar.textContent = `Eliminar Ruta ${rutaExistente.tipo}`;
+                
+                document.querySelectorAll('.tipo-ruta-opcion').forEach(opcion => {
+                    opcion.classList.remove('seleccionada');
+                    if (opcion.dataset.tipo === rutaExistente.tipo) {
+                        opcion.classList.add('seleccionada');
+                        this.tipoRutaSeleccionado = rutaExistente.tipo;
+                    }
+                });
+            } else {
+                btnEliminar.style.display = 'none';
+                document.querySelectorAll('.tipo-ruta-opcion').forEach(opcion => {
+                    opcion.classList.remove('seleccionada');
+                });
+                this.tipoRutaSeleccionado = null;
+            }
         }
         
         document.getElementById('modalTipoRuta').style.display = 'flex';
@@ -1554,93 +2026,39 @@ class ControladorAplicacion {
             return;
         }
         
-        const { fila, columna, paisOrigenId, paisDestinoId, celda } = this.rutaEditando;
-        const paisOrigen = this.mundo.paises[fila];
-        const paisDestino = this.mundo.paises[columna];
+        const { fila, columna, regionOrigenId, regionDestinoId, celda } = this.rutaEditando;
+        const regionOrigen = this.mundo.regiones[fila];
+        const regionDestino = this.mundo.regiones[columna];
         
-        // Verificar si ya existe una ruta
         const clave = `${Math.min(fila, columna)}-${Math.max(fila, columna)}`;
         const rutaExistente = this.mundo.tablaRutas.get(clave);
         
         if (rutaExistente) {
-            // Actualizar ruta existente
             rutaExistente.tipo = this.tipoRutaSeleccionado;
-            rutaExistente.trafico = this.calcularTraficoSegunTipo(this.tipoRutaSeleccionado);
         } else {
-            // Crear nueva ruta
-            const trafico = this.calcularTraficoSegunTipo(this.tipoRutaSeleccionado);
-            this.mundo.agregarRuta(paisOrigenId, paisDestinoId, this.tipoRutaSeleccionado, trafico);
+            const trafico = Math.random() * 0.5 + 0.3;
+            this.mundo.agregarRuta(regionOrigenId, regionDestinoId, this.tipoRutaSeleccionado, trafico);
         }
         
-        // Actualizar tooltip
-        const probabilidad = rutaExistente ? 
-            (rutaExistente.calcularProbabilidadBase() * 100).toFixed(1) : '0.0';
-        
-        celda.title = `${paisOrigen.nombre} ↔ ${paisDestino.nombre}\n` +
-                    `Tipo: ${this.tipoRutaSeleccionado}\n` +
-                    `Prob. contagio: ${probabilidad}%`;
-        
-        // Actualizar clases CSS para el color
-        celda.classList.remove('celda-aerea', 'celda-terrestre', 'celda-maritima');
-        
-        switch(this.tipoRutaSeleccionado) {
-            case 'AEREO':
-                celda.classList.add('celda-aerea');
-                celda.style.backgroundColor = 'rgba(255, 100, 100, 0.7)';
-                break;
-            case 'TERRESTRE':
-                celda.classList.add('celda-terrestre');
-                celda.style.backgroundColor = 'rgba(100, 255, 100, 0.7)';
-                break;
-            case 'MARITIMO':
-                celda.classList.add('celda-maritima');
-                celda.style.backgroundColor = 'rgba(100, 100, 255, 0.7)';
-                break;
-        }
-        
-        celda.classList.remove('matriz-celda-inactiva');
-        celda.classList.add('matriz-celda-activa');
-        celda.textContent = '1';
-        celda.style.color = '#000000';
-        celda.style.fontWeight = 'bold';
-        
-        this.dibujarMapa();
-        this.mostrarMensaje(`Ruta ${rutaExistente ? 'actualizada' : 'creada'}: ${paisOrigen.nombre} ↔ ${paisDestino.nombre} (${this.tipoRutaSeleccionado})`);
+        this.generarMatrizVisual();
+        this.dibujarMapaPrincipal();
+        this.mostrarMensaje(`✅ Ruta ${rutaExistente ? 'actualizada' : 'creada'}: ${regionOrigen.nombre} ↔ ${regionDestino.nombre} (${this.tipoRutaSeleccionado})`);
         this.cerrarModalTipoRuta();
     }
 
     eliminarRutaDesdeModal() {
         if (!this.rutaEditando) return;
         
-        const { fila, columna, paisOrigenId, paisDestinoId, celda } = this.rutaEditando;
-        const paisOrigen = this.mundo.paises[fila];
-        const paisDestino = this.mundo.paises[columna];
+        const { fila, columna, regionOrigenId, regionDestinoId } = this.rutaEditando;
+        const regionOrigen = this.mundo.regiones[fila];
+        const regionDestino = this.mundo.regiones[columna];
         
-        // Eliminar ruta (se elimina simétricamente)
-        this.mundo.eliminarRuta(paisOrigenId, paisDestinoId);
+        this.mundo.eliminarRuta(regionOrigenId, regionDestinoId);
         
-        // Actualizar celda en la matriz
-        celda.classList.remove('matriz-celda-activa');
-        celda.classList.add('matriz-celda-inactiva');
-        celda.textContent = '0';
-        celda.title = 'Sin ruta';
-        
-        this.dibujarMapa();
-        this.mostrarMensaje(`Ruta eliminada: ${paisOrigen.nombre} ↔ ${paisDestino.nombre}`);
+        this.generarMatrizVisual();
+        this.dibujarMapaPrincipal();
+        this.mostrarMensaje(`✅ Ruta eliminada: ${regionOrigen.nombre} ↔ ${regionDestino.nombre}`);
         this.cerrarModalTipoRuta();
-    }
-
-    calcularTraficoSegunTipo(tipo) {
-        // Valores de tráfico base según tipo
-        const traficosBase = {
-            'AEREO': 0.8,    // Alto tráfico
-            'TERRESTRE': 0.6, // Medio tráfico
-            'MARITIMO': 0.4   // Bajo tráfico
-        };
-        
-        // Añadir variabilidad aleatoria
-        const variacion = (Math.random() * 0.4) - 0.2; // ±20%
-        return Math.min(Math.max(traficosBase[tipo] + variacion, 0.1), 0.95);
     }
 
     activarEdicionMatriz() {
@@ -1648,318 +2066,258 @@ class ControladorAplicacion {
         const celdas = document.querySelectorAll('.matriz-celda');
         
         if (btn.innerHTML.includes('fa-edit')) {
-            // Activar edición
             btn.innerHTML = '<i class="fas fa-save"></i> Guardar Cambios';
             celdas.forEach(celda => {
-                celda.style.cursor = 'pointer';
-                celda.style.backgroundColor = celda.classList.contains('matriz-celda-activa') ? 
-                    'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.1)';
+                if (!celda.classList.contains('matriz-corner') && !celda.classList.contains('matriz-encabezado')) {
+                    celda.style.cursor = 'pointer';
+                    celda.style.backgroundColor = celda.classList.contains('matriz-celda-activa') ? 
+                        'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.1)';
+                }
             });
+            this.mostrarMensaje('✏️ Modo edición activado. Haz clic en las celdas para modificar rutas.');
         } else {
-            // Guardar cambios
             btn.innerHTML = '<i class="fas fa-edit"></i> Modo Edición';
             celdas.forEach(celda => {
                 celda.style.cursor = 'default';
                 celda.style.backgroundColor = '';
             });
-            
-            this.mostrarMensaje('Cambios en la matriz guardados');
+            this.mostrarMensaje('💾 Cambios en la matriz guardados');
         }
     }
 
-    // ========== MÉTODOS DE ANÁLISIS ==========
+    toggleMatriz() {
+        const matrizContainer = document.getElementById('matrizContainer');
+        const btnToggle = document.getElementById('btnToggleMatriz');
+        
+        if (matrizContainer.style.display === 'none') {
+            matrizContainer.style.display = 'block';
+            btnToggle.innerHTML = '<i class="fas fa-eye-slash"></i> Ocultar Matriz';
+            this.generarMatrizVisual();
+        } else {
+            matrizContainer.style.display = 'none';
+            btnToggle.innerHTML = '<i class="fas fa-eye"></i> Mostrar Matriz';
+        }
+    }
 
     predecir30Dias() {
         if (!this.simulacion) return;
         
-        // Crear una copia profunda para predicción
-        const mundoCopia = new Mundo();
+        const mundoCopia = new Mundo(this.mundo.configMapa);
         
-        // Copiar países
-        this.mundo.paises.forEach(paisOriginal => {
-            const paisCopia = mundoCopia.agregarPais(
-                paisOriginal.nombre,
-                paisOriginal.estadoPoblacion.total / 1000000,
-                paisOriginal.coordenadas.latitud,
-                paisOriginal.coordenadas.longitud
-            );
-            
-            // Copiar estado actual
-            paisCopia.estadoPoblacion = { ...paisOriginal.estadoPoblacion };
-            paisCopia.medidasVigentes = [...paisOriginal.medidasVigentes];
-            paisCopia.estadoInfeccioso = paisOriginal.estadoInfeccioso;
-            paisCopia.factorTransmision = paisOriginal.factorTransmision;
+        this.mundo.regiones.forEach(regionOriginal => {
+            const regionCopia = mundoCopia.regiones.find(p => p.nombre === regionOriginal.nombre);
+            if (regionCopia) {
+                regionCopia.estadoPoblacion = { ...regionOriginal.estadoPoblacion };
+                regionCopia.medidasVigentes = [...regionOriginal.medidasVigentes];
+                regionCopia.estadoInfeccioso = regionOriginal.estadoInfeccioso;
+                regionCopia.factorTransmision = regionOriginal.factorTransmision;
+                regionCopia.enCuarentena = regionOriginal.enCuarentena;
+                regionCopia.cohortesInfectados = regionOriginal.cohortesInfectados.map(c => ({...c}));
+                regionCopia.cohortesRecuperados = regionOriginal.cohortesRecuperados.map(c => ({...c}));
+            }
         });
         
-        // Copiar rutas
-        this.mundo.rutas.forEach(rutaOriginal => {
-            mundoCopia.agregarRuta(
-                rutaOriginal.idOrigen,
-                rutaOriginal.idDestino,
-                rutaOriginal.tipo,
-                rutaOriginal.trafico
-            );
-        });
-        
-        // Crear copia de enfermedad
         const enfermedadCopia = new Enfermedad(
             this.enfermedad.nombre,
             this.enfermedad.tasaContagio * 100,
             this.enfermedad.tasaMortalidad * 100,
             this.enfermedad.tiempoRecuperacion,
-            this.enfermedad.paisOrigen
+            this.enfermedad.regionOrigen
         );
         enfermedadCopia.viaPrevaleciente = [...this.enfermedad.viaPrevaleciente];
+        enfermedadCopia.factorReduccionReinfeccion = this.enfermedad.factorReduccionReinfeccion;
         
-        // Crear simulación para predicción
         const simPrediccion = new Simulacion(mundoCopia, enfermedadCopia);
+        simPrediccion.fechaActual = this.simulacion.fechaActual;
+        simPrediccion.configuracion.permitirReinfecciones = this.simulacion.configuracion.permitirReinfecciones;
         
-        // Avanzar 30 días
-        for (let i = 0; i < 30; i++) {
-            simPrediccion.avanzarUnDia();
-        }
+        for (let i = 0; i < 30; i++) simPrediccion.avanzarUnDia();
         
-        // Obtener resultados
         const stats = simPrediccion.obtenerEstadisticasGlobales();
-        const paisesMasAfectados = simPrediccion.mundo.paises
+        const regionesMasAfectadas = simPrediccion.mundo.regiones
             .filter(p => p.estadoPoblacion.infectada > 0)
             .sort((a, b) => b.estadoPoblacion.infectada - a.estadoPoblacion.infectada)
             .slice(0, 5);
         
-        // Mostrar resultados
-        let resultadoHTML = `<h4>Predicción para Día ${this.simulacion.fechaActual + 30}:</h4>`;
+        const regionesConMasReinfecciones = simPrediccion.mundo.regiones
+            .filter(p => p.estadoPoblacion.reinfectados > 0)
+            .sort((a, b) => b.estadoPoblacion.reinfectados - a.estadoPoblacion.reinfectados)
+            .slice(0, 3);
+        
+        let resultadoHTML = `<h4>📈 Predicción para Día ${this.simulacion.fechaActual + 30}:</h4>`;
         resultadoHTML += `<p><strong>Total Infectados:</strong> ${stats.totalInfectados.toLocaleString()}</p>`;
         resultadoHTML += `<p><strong>Total Fallecidos:</strong> ${stats.totalFallecidos.toLocaleString()}</p>`;
-        resultadoHTML += `<p><strong>Países Afectados:</strong> ${stats.paisesAfectados}</p>`;
-        resultadoHTML += `<p><strong>Tasa Propagación Promedio:</strong> ${(stats.tasaPropagacion * 100).toFixed(2)}%</p>`;
+        resultadoHTML += `<p><strong>Total Reinfecciones:</strong> ${stats.totalReinfectados.toLocaleString()}</p>`;
+        resultadoHTML += `<p><strong>Regiones Afectadas:</strong> ${stats.regionesAfectadas}</p>`;
+        resultadoHTML += `<p><strong>Regiones con Reinfección:</strong> ${stats.regionesConReinfeccion}</p>`;
+        resultadoHTML += `<p><strong>Regiones en Cuarentena:</strong> ${stats.regionesEnCuarentena}</p>`;
         
-        resultadoHTML += `<h4>Países más afectados:</h4><ul>`;
-        paisesMasAfectados.forEach(pais => {
-            const porcentaje = (pais.estadoPoblacion.infectada / pais.estadoPoblacion.total) * 100;
-            resultadoHTML += `<li>${pais.nombre}: ${pais.estadoPoblacion.infectada.toLocaleString()} infectados (${porcentaje.toFixed(1)}%)</li>`;
+        const tasaPrediccion = stats.tasaPropagacion * 100;
+        if (tasaPrediccion < 0) {
+            resultadoHTML += `<p><strong>Tasa de Curación:</strong> ${Math.abs(tasaPrediccion).toFixed(2)}%</p>`;
+        } else {
+            resultadoHTML += `<p><strong>Tasa Propagación:</strong> ${tasaPrediccion.toFixed(2)}%</p>`;
+        }
+        
+        resultadoHTML += `<h4>🔥 Regiones más afectadas:</h4><ul>`;
+        regionesMasAfectadas.forEach(region => {
+            const porcentaje = (region.estadoPoblacion.infectada / region.estadoPoblacion.total) * 100;
+            const reinfecciones = region.estadoPoblacion.reinfectados > 0 ? 
+                ` (🔄 ${region.estadoPoblacion.reinfectados.toLocaleString()} reinfecciones)` : '';
+            const cuarentena = region.enCuarentena ? ' [🔒 CUARENTENA]' : '';
+            resultadoHTML += `<li>${region.nombre}: ${region.estadoPoblacion.infectada.toLocaleString()} infectados${reinfecciones}${cuarentena} (${porcentaje.toFixed(1)}%)</li>`;
         });
         resultadoHTML += `</ul>`;
         
-        document.getElementById('resultadosAnalisis').innerHTML = resultadoHTML;
-        
-        // Dibujar en mapa de análisis con colores de predicción
-        this.dibujarMapaAnalisis(simPrediccion);
-        
-        this.mostrarMensaje('Predicción de 30 días generada y mostrada en mapa de análisis');
-    }
-
-    dibujarMapaAnalisis(simulacionAnalisis, tipo = 'prediccion') {
-        const canvas = document.getElementById('mapaAnalisisCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Limpiar canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Escalar coordenadas (usar mismo método que mapa principal)
-        const minLat = Math.min(...simulacionAnalisis.mundo.paises.map(p => p.coordenadas.latitud));
-        const maxLat = Math.max(...simulacionAnalisis.mundo.paises.map(p => p.coordenadas.latitud));
-        const minLng = Math.min(...simulacionAnalisis.mundo.paises.map(p => p.coordenadas.longitud));
-        const maxLng = Math.max(...simulacionAnalisis.mundo.paises.map(p => p.coordenadas.longitud));
-        
-        const margen = 0.15;
-        const rangoLat = maxLat - minLat;
-        const rangoLng = maxLng - minLng;
-        
-        const minLatConMargen = minLat - (rangoLat * margen);
-        const maxLatConMargen = maxLat + (rangoLat * margen);
-        const minLngConMargen = minLng - (rangoLng * margen);
-        const maxLngConMargen = maxLng + (rangoLng * margen);
-        
-        const escalaX = canvas.width / (maxLngConMargen - minLngConMargen);
-        const escalaY = canvas.height / (maxLatConMargen - minLatConMargen);
-        
-        // Dibujar según tipo de análisis
-        if (tipo === 'prediccion') {
-            // Dibujar países con colores según nivel de infección predicho
-            simulacionAnalisis.mundo.paises.forEach(pais => {
-                const x = (pais.coordenadas.longitud - minLngConMargen) * escalaX;
-                const y = canvas.height - ((pais.coordenadas.latitud - minLatConMargen) * escalaY);
-                
-                const radio = Math.max(6, 4 + Math.log10(pais.estadoPoblacion.total / 1000000) * 2.5);
-                
-                // Color basado en porcentaje de infección
-                const porcentajeInfectado = (pais.estadoPoblacion.infectada / pais.estadoPoblacion.total) * 100;
-                
-                let color;
-                if (porcentajeInfectado === 0) {
-                    color = '#4CAF50'; // Verde: libre
-                } else if (porcentajeInfectado < 10) {
-                    color = '#FFC107'; // Amarillo: bajo
-                } else if (porcentajeInfectado < 30) {
-                    color = '#FF9800'; // Naranja: medio
-                } else {
-                    color = '#F44336'; // Rojo: alto
-                }
-                
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(x, y, radio, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Mostrar porcentaje
-                if (porcentajeInfectado > 0) {
-                    ctx.fillStyle = '#000000';
-                    ctx.font = 'bold 10px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(`${porcentajeInfectado.toFixed(0)}%`, x, y);
-                }
-            });
-            
-            document.getElementById('infoAnalisis').innerHTML = 
-                '<p>Mapa de predicción a 30 días. Colores indican porcentaje de población infectada.</p>';
-        }
-    }
-
-    identificarPaisesRiesgo() {
-        const paisesLibres = this.mundo.paises.filter(p => p.estadoPoblacion.infectada === 0);
-        const paisesInfectados = this.mundo.paises.filter(p => p.estadoPoblacion.infectada > 0);
-        
-        let paisesRiesgo = [];
-        
-        paisesLibres.forEach(paisLibre => {
-            // Encontrar rutas desde países infectados a este país
-            let riesgo = 0;
-            
-            paisesInfectados.forEach(paisInfectado => {
-                const ruta = this.mundo.tablaRutas.get(`${paisInfectado.id}-${paisLibre.id}`);
-                if (ruta && ruta.activa) {
-                    riesgo += ruta.calcularProbabilidadBase() * 
-                             (paisInfectado.estadoPoblacion.infectada / paisInfectado.estadoPoblacion.total);
-                }
-            });
-            
-            if (riesgo > 0.1) { // Umbral de riesgo
-                paisesRiesgo.push({
-                    pais: paisLibre,
-                    riesgo: riesgo
-                });
-            }
-        });
-        
-        paisesRiesgo.sort((a, b) => b.riesgo - a.riesgo);
-        
-        let resultadoHTML = `<h4>Países en Riesgo de Contagio:</h4>`;
-        
-        if (paisesRiesgo.length === 0) {
-            resultadoHTML += `<p>No se identificaron países en riesgo alto.</p>`;
-        } else {
-            resultadoHTML += `<ul>`;
-            paisesRiesgo.slice(0, 5).forEach(item => {
-                resultadoHTML += `<li>${item.pais.nombre}: Riesgo ${(item.riesgo * 100).toFixed(1)}%</li>`;
+        if (regionesConMasReinfecciones.length > 0) {
+            resultadoHTML += `<h4>🔄 Regiones con más reinfecciones:</h4><ul>`;
+            regionesConMasReinfecciones.forEach(region => {
+                const porcentaje = (region.estadoPoblacion.reinfectados / region.estadoPoblacion.total) * 100;
+                resultadoHTML += `<li>${region.nombre}: ${region.estadoPoblacion.reinfectados.toLocaleString()} reinfecciones (${porcentaje.toFixed(2)}%)</li>`;
             });
             resultadoHTML += `</ul>`;
         }
         
         document.getElementById('resultadosAnalisis').innerHTML = resultadoHTML;
-        this.dibujarPaisesRiesgoEnMapa(paisesRiesgo);
-    
-        this.mostrarMensaje(`${paisesRiesgo.length} países identificados en riesgo`);
+        
+        this.dibujarMapaAnalisisPrediccion(simPrediccion);
+        this.mostrarMensaje('📊 Predicción de 30 días generada (incluye reinfecciones y cuarentenas)');
     }
 
-    dibujarPaisesRiesgoEnMapa(paisesRiesgo) {
-        const canvas = document.getElementById('mapaAnalisisCanvas');
-        const ctx = canvas.getContext('2d');
+    dibujarMapaAnalisisPrediccion(simulacionAnalisis) {
+        if (!this.mapaAnalisis) return;
         
-        // Limpiar canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        this.mapaAnalisis.eachLayer(layer => {
+            if (!layer._url) {
+                this.mapaAnalisis.removeLayer(layer);
+            }
+        });
         
-        // ... (código para escalar y dibujar) ...
-        
-        // Dibujar países en riesgo con color especial
-        paisesRiesgo.forEach(item => {
-            const pais = item.pais;
-            const x = (pais.coordenadas.longitud - minLngConMargen) * escalaX;
-            const y = canvas.height - ((pais.coordenadas.latitud - minLatConMargen) * escalaY);
+        simulacionAnalisis.mundo.regiones.forEach(region => {
+            const porcentajeInfectado = (region.estadoPoblacion.infectada / region.estadoPoblacion.total) * 100;
+            const tieneReinfecciones = region.estadoPoblacion.reinfectados > 0;
+            const enCuarentena = region.enCuarentena;
             
-            const radio = Math.max(8, 6 + Math.log10(pais.estadoPoblacion.total / 1000000) * 2.5);
+            let color, radio;
             
-            // Color gradiente según riesgo
-            const intensidad = Math.min(255, Math.floor(item.riesgo * 255 * 3));
-            ctx.fillStyle = `rgb(255, ${255 - intensidad}, 0)`;
+            if (porcentajeInfectado === 0) {
+                color = '#4CAF50';
+                radio = 6;
+            } else if (porcentajeInfectado < 10) {
+                color = '#FFC107';
+                radio = 8;
+            } else if (porcentajeInfectado < 30) {
+                color = '#FF9800';
+                radio = 10;
+            } else {
+                color = '#F44336';
+                radio = 12;
+            }
             
-            ctx.beginPath();
-            ctx.arc(x, y, radio, 0, Math.PI * 2);
-            ctx.fill();
+            const marker = L.circleMarker(
+                [region.coordenadas.latitud, region.coordenadas.longitud],
+                {
+                    radius: radio,
+                    fillColor: color,
+                    color: enCuarentena ? '#673AB7' : (tieneReinfecciones ? '#9C27B0' : '#000'),
+                    weight: enCuarentena ? 3 : (tieneReinfecciones ? 2 : 1),
+                    opacity: 1,
+                    fillOpacity: 0.7
+                }
+            ).addTo(this.mapaAnalisis);
             
-            // Borde
-            ctx.strokeStyle = '#FF9800';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            let tooltip = `<strong>${region.nombre}</strong><br>`;
+            tooltip += `🤒 Infectados: ${porcentajeInfectado.toFixed(1)}%<br>`;
+            if (tieneReinfecciones) tooltip += `🔄 Reinfecciones: ${region.estadoPoblacion.reinfectados.toLocaleString()}<br>`;
+            if (enCuarentena) tooltip += `🔒 EN CUARENTENA<br>`;
+            tooltip += `📅 Predicción a 30 días`;
             
-            // Mostrar porcentaje de riesgo
-            ctx.fillStyle = '#000000';
-            ctx.font = 'bold 11px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(`${(item.riesgo * 100).toFixed(0)}%`, x, y);
+            marker.bindTooltip(tooltip);
         });
         
         document.getElementById('infoAnalisis').innerHTML = 
-            `<p>Países en riesgo identificados. Color indica nivel de riesgo.</p>`;
+            `<p>Mapa de predicción a 30 días. Colores indican porcentaje de población infectada. 
+            🔒 Indica cuarentena, 🟣 indica reinfecciones.</p>`;
     }
 
-    identificarRutasCriticas() {
-        // Calcular centralidad de grado para cada ruta
-        const rutasConImportancia = [];
+    identificarRegionesRiesgo() {
+        const regionesLibres = this.mundo.regiones.filter(p => p.estadoPoblacion.infectada === 0);
+        const regionesInfectadas = this.mundo.regiones.filter(p => p.estadoPoblacion.infectada > 0);
         
-        this.mundo.rutas.forEach(ruta => {
-            const paisOrigen = this.mundo.obtenerPaisPorId(ruta.idOrigen);
-            const paisDestino = this.mundo.obtenerPaisPorId(ruta.idDestino);
+        let regionesRiesgo = [];
+        let regionesRiesgoReinfeccion = [];
+        
+        regionesLibres.forEach(regionLibre => {
+            let riesgo = 0;
+            let riesgoReinfeccion = 0;
             
-            if (!paisOrigen || !paisDestino) return;
+            regionesInfectadas.forEach(regionInfectada => {
+                const clave = `${Math.min(regionInfectada.id, regionLibre.id)}-${Math.max(regionInfectada.id, regionLibre.id)}`;
+                const ruta = this.mundo.tablaRutas.get(clave);
+                if (ruta && ruta.activa && !ruta.cortada) {
+                    riesgo += ruta.calcularProbabilidadBase() * 
+                             (regionInfectada.estadoPoblacion.infectada / regionInfectada.estadoPoblacion.total);
+                    
+                    if (regionLibre.estadoPoblacion.recuperada > 0) {
+                        riesgoReinfeccion += ruta.calcularProbabilidadBase() * 0.3 * 
+                                          (regionInfectada.estadoPoblacion.infectada / regionInfectada.estadoPoblacion.total);
+                    }
+                }
+            });
             
-            // Importancia basada en tráfico, probabilidad y estado de los países
-            let importancia = ruta.trafico;
-            importancia *= ruta.calcularProbabilidadBase();
-            
-            if (paisOrigen.estadoPoblacion.infectada > 0) {
-                importancia *= 1 + (paisOrigen.estadoPoblacion.infectada / paisOrigen.estadoPoblacion.total);
+            if (riesgo > 0.05) {
+                regionesRiesgo.push({ region: regionLibre, riesgo: riesgo, tipo: 'primera' });
             }
             
-            rutasConImportancia.push({
-                ruta: ruta,
-                importancia: importancia,
-                descripcion: `${paisOrigen.nombre} → ${paisDestino.nombre} (${ruta.tipo})`
-            });
+            if (riesgoReinfeccion > 0.02 && regionLibre.estadoPoblacion.recuperada > 0) {
+                regionesRiesgoReinfeccion.push({ region: regionLibre, riesgo: riesgoReinfeccion, tipo: 'reinfeccion' });
+            }
         });
         
-        rutasConImportancia.sort((a, b) => b.importancia - a.importancia);
+        regionesRiesgo.sort((a, b) => b.riesgo - a.riesgo);
+        regionesRiesgoReinfeccion.sort((a, b) => b.riesgo - a.riesgo);
         
-        let resultadoHTML = `<h4>Rutas de Expansión Críticas:</h4>`;
+        let resultadoHTML = `<h4>⚠️ Regiones en Riesgo de Contagio:</h4>`;
         
-        if (rutasConImportancia.length === 0) {
-            resultadoHTML += `<p>No hay rutas activas.</p>`;
+        if (regionesRiesgo.length === 0 && regionesRiesgoReinfeccion.length === 0) {
+            resultadoHTML += `<p>No se identificaron regiones en riesgo alto.</p>`;
         } else {
-            resultadoHTML += `<ol>`;
-            rutasConImportancia.slice(0, 5).forEach(item => {
-                const porcentaje = (item.importancia * 100).toFixed(1);
-                resultadoHTML += `<li>${item.descripcion}: Importancia ${porcentaje}%</li>`;
-            });
-            resultadoHTML += `</ol>`;
+            if (regionesRiesgo.length > 0) {
+                resultadoHTML += `<h5>Primera Infección:</h5><ol>`;
+                regionesRiesgo.slice(0, 5).forEach(item => {
+                    resultadoHTML += `<li>${item.region.nombre}: Riesgo ${(item.riesgo * 100).toFixed(1)}%</li>`;
+                });
+                resultadoHTML += `</ol>`;
+            }
+            
+            if (regionesRiesgoReinfeccion.length > 0) {
+                resultadoHTML += `<h5>Reinfección:</h5><ol>`;
+                regionesRiesgoReinfeccion.slice(0, 3).forEach(item => {
+                    resultadoHTML += `<li>${item.region.nombre}: Riesgo ${(item.riesgo * 100).toFixed(1)}% (${item.region.estadoPoblacion.recuperada.toLocaleString()} recuperados)</li>`;
+                });
+                resultadoHTML += `</ol>`;
+            }
         }
         
         document.getElementById('resultadosAnalisis').innerHTML = resultadoHTML;
-        this.mostrarMensaje('Rutas críticas identificadas');
+        
+        this.dibujarRegionesRiesgoEnMapa([...regionesRiesgo, ...regionesRiesgoReinfeccion]);
+        this.mostrarMensaje(`⚠️ ${regionesRiesgo.length} regiones en riesgo de primera infección, ${regionesRiesgoReinfeccion.length} en riesgo de reinfección`);
     }
 
-    filtrarRutasAereas() {
-        // Dibujar solo rutas aéreas en el mapa de análisis
-        const canvas = document.getElementById('mapaAnalisisCanvas');
-        const ctx = canvas.getContext('2d');
+    dibujarRegionesRiesgoEnMapa(regionesRiesgo) {
+        if (!this.mapaAnalisis || regionesRiesgo.length === 0) return;
         
-        // Limpiar canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        this.mapaAnalisis.eachLayer(layer => {
+            if (!layer._url) {
+                this.mapaAnalisis.removeLayer(layer);
+            }
+        });
         
-        // Escalar coordenadas
-        const minLat = Math.min(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const maxLat = Math.max(...this.mundo.paises.map(p => p.coordenadas.latitud));
-        const minLng = Math.min(...this.mundo.paises.map(p => p.coordenadas.longitud));
-        const maxLng = Math.max(...this.mundo.paises.map(p => p.coordenadas.longitud));
+        const minLat = Math.min(...this.mundo.regiones.map(p => p.coordenadas.latitud));
+        const maxLat = Math.max(...this.mundo.regiones.map(p => p.coordenadas.latitud));
+        const minLng = Math.min(...this.mundo.regiones.map(p => p.coordenadas.longitud));
+        const maxLng = Math.max(...this.mundo.regiones.map(p => p.coordenadas.longitud));
         
         const margen = 0.15;
         const rangoLat = maxLat - minLat;
@@ -1970,82 +2328,265 @@ class ControladorAplicacion {
         const minLngConMargen = minLng - (rangoLng * margen);
         const maxLngConMargen = maxLng + (rangoLng * margen);
         
-        const escalaX = canvas.width / (maxLngConMargen - minLngConMargen);
-        const escalaY = canvas.height / (maxLatConMargen - minLatConMargen);
+        const escalaX = this.mapaAnalisis.getSize().x / (maxLngConMargen - minLngConMargen);
+        const escalaY = this.mapaAnalisis.getSize().y / (maxLatConMargen - minLatConMargen);
         
-        // Filtrar solo rutas aéreas
-        const rutasAereas = this.mundo.rutas.filter(r => r.tipo === 'AEREO' && r.activa);
-        
-        // Dibujar rutas aéreas
-        ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
-        ctx.lineWidth = 2;
-        
-        rutasAereas.forEach(ruta => {
-            const origen = this.mundo.obtenerPaisPorId(ruta.idOrigen);
-            const destino = this.mundo.obtenerPaisPorId(ruta.idDestino);
+        regionesRiesgo.forEach(item => {
+            const region = item.region;
+            const x = (region.coordenadas.longitud - minLngConMargen) * escalaX;
+            const y = this.mapaAnalisis.getSize().y - ((region.coordenadas.latitud - minLatConMargen) * escalaY);
             
-            if (origen && destino) {
-                const x1 = (origen.coordenadas.longitud - minLngConMargen) * escalaX;
-                const y1 = canvas.height - ((origen.coordenadas.latitud - minLatConMargen) * escalaY);
-                const x2 = (destino.coordenadas.longitud - minLngConMargen) * escalaX;
-                const y2 = canvas.height - ((destino.coordenadas.latitud - minLatConMargen) * escalaY);
-                
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
+            const radio = Math.max(8, 6 + Math.log10(region.estadoPoblacion.total / 1000000) * 2.5);
+            const intensidad = Math.min(255, Math.floor(item.riesgo * 255 * 4));
+            
+            let fillColor, color;
+            if (item.tipo === 'reinfeccion') {
+                fillColor = `rgb(200, ${255 - intensidad}, 200)`;
+                color = '#9C27B0';
+            } else {
+                fillColor = `rgb(255, ${255 - intensidad}, 0)`;
+                color = '#FF9800';
+            }
+            
+            const marker = L.circleMarker(
+                [region.coordenadas.latitud, region.coordenadas.longitud],
+                {
+                    radius: radio,
+                    fillColor: fillColor,
+                    color: color,
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.7
+                }
+            ).addTo(this.mapaAnalisis);
+            
+            marker.bindTooltip(`
+                <strong>${region.nombre}</strong><br>
+                Riesgo: ${(item.riesgo * 100).toFixed(1)}%<br>
+                Tipo: ${item.tipo === 'reinfeccion' ? 'Reinfección' : 'Primera Infección'}
+            `);
+        });
+        
+        document.getElementById('infoAnalisis').innerHTML = 
+            '<p>Regiones en riesgo identificadas. 🟠 Naranja: primera infección. 🟣 Púrpura: reinfección.</p>';
+    }
+
+    identificarRutasCriticas() {
+        const rutasConImportancia = [];
+        
+        this.mundo.rutas.forEach(ruta => {
+            const regionOrigen = this.mundo.obtenerRegionPorId(ruta.idOrigen);
+            const regionDestino = this.mundo.obtenerRegionPorId(ruta.idDestino);
+            
+            if (!regionOrigen || !regionDestino) return;
+            
+            let importancia = ruta.trafico;
+            importancia *= ruta.calcularProbabilidadBase();
+            
+            if (regionOrigen.estadoPoblacion.infectada > 0) {
+                importancia *= 1 + (regionOrigen.estadoPoblacion.infectada / regionOrigen.estadoPoblacion.total);
+            }
+            
+            let importanciaReinfeccion = importancia * 0.3;
+            
+            rutasConImportancia.push({
+                ruta: ruta,
+                importancia: importancia,
+                importanciaReinfeccion: importanciaReinfeccion,
+                descripcion: `${regionOrigen.nombre} → ${regionDestino.nombre} (${ruta.tipo})`,
+                cortada: ruta.cortada
+            });
+        });
+        
+        rutasConImportancia.sort((a, b) => b.importancia - a.importancia);
+        
+        let resultadoHTML = `<h4>🛣️ Rutas de Expansión Críticas:</h4>`;
+        
+        if (rutasConImportancia.length === 0) {
+            resultadoHTML += `<p>No hay rutas activas.</p>`;
+        } else {
+            resultadoHTML += `<h5>Primera Infección:</h5><ol>`;
+            rutasConImportancia
+                .filter(r => !r.cortada)
+                .slice(0, 5)
+                .forEach(item => {
+                    const porcentaje = (item.importancia * 100).toFixed(1);
+                    resultadoHTML += `<li>${item.descripcion}: Importancia ${porcentaje}%</li>`;
+                });
+            resultadoHTML += `</ol>`;
+            
+            const rutasReinfeccion = rutasConImportancia
+                .filter(r => r.importanciaReinfeccion > 0.1 && !r.cortada)
+                .sort((a, b) => b.importanciaReinfeccion - a.importanciaReinfeccion)
+                .slice(0, 3);
+            
+            if (rutasReinfeccion.length > 0) {
+                resultadoHTML += `<h5>Reinfección:</h5><ol>`;
+                rutasReinfeccion.forEach(item => {
+                    const porcentaje = (item.importanciaReinfeccion * 100).toFixed(1);
+                    resultadoHTML += `<li>${item.descripcion}: Importancia ${porcentaje}%</li>`;
+                });
+                resultadoHTML += `</ol>`;
+            }
+            
+            const rutasCortadasCriticas = rutasConImportancia
+                .filter(r => r.cortada && r.importancia > 0.2)
+                .slice(0, 3);
+            
+            if (rutasCortadasCriticas.length > 0) {
+                resultadoHTML += `<h5>🔒 Rutas Críticas Cortadas:</h5><ol>`;
+                rutasCortadasCriticas.forEach(item => {
+                    const porcentaje = (item.importancia * 100).toFixed(1);
+                    resultadoHTML += `<li>${item.descripcion}: Importancia ${porcentaje}% (CORTADA)</li>`;
+                });
+                resultadoHTML += `</ol>`;
+            }
+        }
+        
+        document.getElementById('resultadosAnalisis').innerHTML = resultadoHTML;
+        this.mostrarMensaje('🛣️ Rutas críticas identificadas (incluye rutas de reinfección)');
+    }
+
+    filtrarRutasAereas() {
+        if (!this.mapaAnalisis) return;
+        
+        this.mapaAnalisis.eachLayer(layer => {
+            if (!layer._url) {
+                this.mapaAnalisis.removeLayer(layer);
             }
         });
         
-        // Dibujar países
-        this.mundo.paises.forEach(pais => {
-            const x = (pais.coordenadas.longitud - minLngConMargen) * escalaX;
-            const y = canvas.height - ((pais.coordenadas.latitud - minLatConMargen) * escalaY);
+        const minLat = Math.min(...this.mundo.regiones.map(p => p.coordenadas.latitud));
+        const maxLat = Math.max(...this.mundo.regiones.map(p => p.coordenadas.latitud));
+        const minLng = Math.min(...this.mundo.regiones.map(p => p.coordenadas.longitud));
+        const maxLng = Math.max(...this.mundo.regiones.map(p => p.coordenadas.longitud));
+        
+        const margen = 0.15;
+        const rangoLat = maxLat - minLat;
+        const rangoLng = maxLng - minLng;
+        
+        const minLatConMargen = minLat - (rangoLat * margen);
+        const maxLatConMargen = maxLat + (rangoLat * margen);
+        const minLngConMargen = minLng - (rangoLng * margen);
+        const maxLngConMargen = maxLng + (rangoLng * margen);
+        
+        const escalaX = this.mapaAnalisis.getSize().x / (maxLngConMargen - minLngConMargen);
+        const escalaY = this.mapaAnalisis.getSize().y / (maxLatConMargen - minLatConMargen);
+        
+        const rutasAereas = this.mundo.rutas.filter(r => r.tipo === 'AEREO' && r.activa);
+        
+        rutasAereas.forEach(ruta => {
+            const origen = this.mundo.obtenerRegionPorId(ruta.idOrigen);
+            const destino = this.mundo.obtenerRegionPorId(ruta.idDestino);
             
-            const radio = Math.max(6, 4 + Math.log10(pais.estadoPoblacion.total / 1000000) * 2.5);
+            if (origen && destino) {
+                const latlngs = [
+                    [origen.coordenadas.latitud, origen.coordenadas.longitud],
+                    [destino.coordenadas.latitud, destino.coordenadas.longitud]
+                ];
+                
+                const color = ruta.cortada ? 'rgba(128, 128, 128, 0.3)' : 'rgba(255, 0, 0, 0.7)';
+                const dashArray = ruta.cortada ? '5, 10' : null;
+                
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: ruta.cortada ? 2 : 3,
+                    opacity: ruta.cortada ? 0.3 : 0.7,
+                    dashArray: dashArray
+                }).addTo(this.mapaAnalisis);
+                
+                const estado = ruta.cortada ? '🔒 CORTADA' : '✅ ACTIVA';
+                polyline.bindTooltip(`
+                    <strong>✈️ ${origen.nombre} ↔ ${destino.nombre}</strong><br>
+                    Estado: ${estado}<br>
+                    Distancia: ${Math.round(ruta.distancia)} km
+                `);
+            }
+        });
+        
+        this.mundo.regiones.forEach(region => {
+            const marker = L.circleMarker(
+                [region.coordenadas.latitud, region.coordenadas.longitud],
+                {
+                    radius: 6,
+                    fillColor: region.getColorEstado(),
+                    color: '#000',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.7
+                }
+            ).addTo(this.mapaAnalisis);
             
-            ctx.fillStyle = pais.getColorEstado();
-            ctx.beginPath();
-            ctx.arc(x, y, radio, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Nombre solo si hay ruta aérea
             const tieneRutaAerea = rutasAereas.some(r => 
-                r.idOrigen === pais.id || r.idDestino === pais.id
+                r.idOrigen === region.id || r.idDestino === region.id
             );
             
             if (tieneRutaAerea) {
-                ctx.fillStyle = '#000000';
-                ctx.font = 'bold 10px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText(pais.nombre.substring(0, 8), x, y - radio - 5);
+                marker.bindTooltip(`
+                    <strong>${region.nombre}</strong><br>
+                    ✈️ Tiene rutas aéreas<br>
+                    ${region.enCuarentena ? '🔒 En cuarentena' : ''}
+                `);
             }
         });
         
         document.getElementById('resultadosAnalisis').innerHTML = 
-            `<h4>Filtro Aplicado</h4><p>Mostrando ${rutasAereas.length} rutas aéreas activas.</p>`;
+            `<h4>✈️ Filtro Aplicado</h4><p>Mostrando ${rutasAereas.length} rutas aéreas activas.</p>`;
         
         document.getElementById('infoAnalisis').innerHTML = 
-            `<p>Mapa filtrado: solo rutas aéreas. ${rutasAereas.length} conexiones activas.</p>`;
+            `<p>Mapa filtrado: solo rutas aéreas. ${rutasAereas.length} conexiones activas. 
+            🔒 Indica rutas cortadas, 🔴 indica regiones infectadas.</p>`;
         
-        this.mostrarMensaje('Filtro de rutas aéreas aplicado en mapa de análisis');
+        this.mostrarMensaje('✈️ Filtro de rutas aéreas aplicado');
     }
-
-    // ========== UTILIDADES ==========
 
     mostrarMensaje(mensaje, esError = false) {
         console.log(esError ? '❌ ' + mensaje : '✅ ' + mensaje);
         
-        // Podrías agregar aquí un sistema de notificaciones en la UI
         const estado = document.getElementById('estadoSimulacion');
-        const estadoOriginal = estado.textContent;
+        if (estado) {
+            const estadoOriginal = estado.textContent;
+            estado.textContent = esError ? `Error: ${mensaje}` : `Info: ${mensaje}`;
+            estado.style.color = esError ? '#e74c3c' : '#27ae60';
+            
+            setTimeout(() => {
+                estado.textContent = estadoOriginal;
+                estado.style.color = '';
+            }, 3000);
+        }
         
-        estado.textContent = esError ? `Error: ${mensaje}` : `Info: ${mensaje}`;
-        estado.style.color = esError ? '#e74c3c' : '#27ae60';
+        const notificacion = document.createElement('div');
+        notificacion.className = `notificacion ${esError ? 'error' : 'exito'}`;
+        notificacion.innerHTML = `
+            <div class="notificacion-contenido">
+                <span class="notificacion-icono">${esError ? '❌' : '✅'}</span>
+                <span class="notificacion-texto">${mensaje}</span>
+            </div>
+        `;
+        
+        notificacion.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: ${esError ? '#e74c3c' : '#27ae60'};
+            color: white;
+            padding: 15px 20px;
+            border-radius: 5px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 10000;
+            animation: slideIn 0.3s ease-out;
+            max-width: 300px;
+        `;
+        
+        document.body.appendChild(notificacion);
         
         setTimeout(() => {
-            estado.textContent = estadoOriginal;
-            estado.style.color = '';
+            notificacion.style.animation = 'slideOut 0.3s ease-out';
+            setTimeout(() => {
+                if (notificacion.parentNode) {
+                    notificacion.parentNode.removeChild(notificacion);
+                }
+            }, 300);
         }, 3000);
     }
 }
@@ -2057,98 +2598,163 @@ class ControladorAplicacion {
 let controlador;
 
 document.addEventListener('DOMContentLoaded', () => {
-    controlador = new ControladorAplicacion();
+    console.log("DOM cargado - Iniciando aplicación...");
     
-    // Añadir estilos adicionales para la matriz
-    const style = document.createElement('style');
-    style.textContent = `
-        .matriz-tabla {
-            border-collapse: collapse;
-            width: 100%;
-            font-size: 0.8rem;
-        }
-        
-        .matriz-tabla th, .matriz-tabla td {
-            border: 1px solid #ddd;
-            padding: 4px;
-            text-align: center;
-            min-width: 30px;
-            height: 30px;
-        }
-        
-        .matriz-corner {
-            background-color: #2c3e50;
-            color: white;
-            font-weight: bold;
-        }
-        
-        .matriz-encabezado {
-            background-color: #34495e;
-            color: white;
-            font-weight: bold;
-            cursor: help;
-        }
-        
-        .matriz-celda-activa {
-            background-color: rgba(76, 175, 80, 0.7);
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        
-        .matriz-celda-inactiva {
-            background-color: rgba(244, 67, 54, 0.2);
-            color: #666;
-            cursor: pointer;
-        }
-        
-        .matriz-celda-activa:hover {
-            background-color: rgba(76, 175, 80, 0.9);
-        }
-        
-        .matriz-celda-inactiva:hover {
-            background-color: rgba(244, 67, 54, 0.4);
-        }
-        
-        .modal-stats {
-            margin: 15px 0;
-        }
-        
-        .modal-stat {
-            display: flex;
-            justify-content: space-between;
-            margin: 8px 0;
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .modal-label {
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        
-        .modal-value {
-            font-weight: bold;
-        }
-        
-        .modal-section {
-            margin: 15px 0;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 6px;
-        }
-        
-        .modal-section h4 {
-            margin-bottom: 10px;
-            color: #2c3e50;
-        }
-        
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-            flex-wrap: wrap;
-        }
-    `;
-    document.head.appendChild(style);
+    controlador = new ControladorAplicacion();
+    window.controlador = controlador;
+    
+    console.log("Aplicación iniciada correctamente");
 });
+
+window.confirmarTipoRuta = function() {
+    if (controlador) controlador.confirmarTipoRuta();
+    else console.error("Controlador no inicializado");
+};
+
+window.cerrarModalTipoRuta = function() {
+    if (controlador) controlador.cerrarModalTipoRuta();
+    else console.error("Controlador no inicializado");
+};
+
+// Añadir estilos CSS para las notificaciones
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    
+    @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+    
+    .notificacion {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 14px;
+    }
+    
+    .notificacion-contenido {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .notificacion-icono {
+        font-size: 18px;
+    }
+    
+    .notificacion-texto {
+        flex: 1;
+    }
+    
+    .notificacion.exito {
+        background: linear-gradient(135deg, #27ae60, #2ecc71);
+    }
+    
+    .notificacion.error {
+        background: linear-gradient(135deg, #e74c3c, #c0392b);
+    }
+    
+    .context-menu-flotante {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    .context-btn {
+        display: block;
+        width: 100%;
+        padding: 8px 12px;
+        margin: 5px 0;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: left;
+        transition: all 0.2s;
+    }
+    
+    .context-btn:hover {
+        background: #e9ecef;
+        transform: translateY(-1px);
+    }
+    
+    .context-btn.active {
+        background: #d4edda;
+        border-color: #c3e6cb;
+        color: #155724;
+    }
+    
+    .context-btn.reinfeccion-btn {
+        background: #f3e5f5;
+        border-color: #e1bee7;
+        color: #4a148c;
+    }
+    
+    .custom-region-marker {
+        background: transparent !important;
+        border: none !important;
+    }
+    
+    .region-marker {
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    
+    .region-marker:hover {
+        transform: scale(1.1);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    }
+    
+    .region-marker.cuarentena {
+        animation: pulse-cuarentena 2s infinite;
+    }
+    
+    @keyframes pulse-cuarentena {
+        0% { box-shadow: 0 0 0 0 rgba(103, 58, 183, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(103, 58, 183, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(103, 58, 183, 0); }
+    }
+    
+    .marker-text {
+        font-size: 14px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+    
+    .ruta-info-modal {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    .ruta-details {
+        margin: 15px 0;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 5px;
+    }
+    
+    .ruta-details p {
+        margin: 8px 0;
+    }
+    
+    .ruta-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+    }
+    
+    .btn-warning {
+        background: #ffc107;
+        color: #212529;
+    }
+    
+    .btn-warning:hover {
+        background: #e0a800;
+    }
+`;
+document.head.appendChild(style);
